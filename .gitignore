@@ -1,59 +1,58 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# AfyaSmart — Flutter client + Supabase backend.
+# The React Native app was removed once the Flutter port reached parity;
+# see git history before the "Remove the React Native app" commit.
 
-# dependencies
-node_modules/
-
-# Expo
-.expo/
-dist/
-web-build/
-expo-env.d.ts
-
-# Native
-.kotlin/
-*.orig.*
-*.jks
-*.p8
-*.p12
-*.key
-*.mobileprovision
-
-# Metro
-.metro-health-check*
-
-# debug
-npm-debug.*
-yarn-debug.*
-yarn-error.*
-firebase-debug.log
-expo-admin*.log
-
-# macOS
-.DS_Store
-*.pem
-
-# local env files
+# Supabase
+supabase/.temp/
+supabase/.branches/
 .env
-.env*.local
-functions/.env
+.env.local
 
-# typescript
-*.tsbuildinfo
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
 
-app-example
-
-# generated native folders
-/ios
-/android
-
-.vscode
-.idea
-
-# Flutter
-.dart_tool/
-build/
-.flutter-plugins
-.flutter-plugins-dependencies
+# IntelliJ related
 *.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
 .pub-cache/
 .pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Widget Preview related
+.widget_preview/

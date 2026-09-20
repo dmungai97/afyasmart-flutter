@@ -4,23 +4,24 @@ A health companion app for the Kenyan market: AI symptom checking, a doctor and
 pharmacy directory, a drug reference, M-Pesa subscriptions and an affiliate
 referral programme.
 
-**The app is mid-rewrite from Expo/React Native to Flutter.** Both clients talk
-to the same Supabase backend, which is the source of truth for all business
-logic.
+A Flutter app on a Supabase backend. The original Expo/React Native client
+was removed once the Flutter port reached screen parity — see the history
+before the "Remove the React Native app" commit if you need it.
 
 | Directory | What it is |
 |---|---|
-| `supabase/` | Postgres schema, RLS policies, RPCs and edge functions — **the backend** |
-| `flutter_app/` | The Flutter client (in progress; will replace the RN app at the repo root) |
-| `app/`, `src/`, `admin/`, `affiliate/` | The Expo/React Native client (working, being retired) |
-| `seed-data/` | Doctor, drug and pharmacy catalogue data, shared by both |
+| `lib/` | The Flutter app: `core/`, `models/`, `services/`, `state/`, `features/` |
+| `supabase/` | Postgres schema, RLS policies, RPCs and edge functions |
+| `assets/seed/` | Doctor, drug and pharmacy catalogue data |
+| `assets/branding/` | App icon and splash source art |
+| `scripts/` | `build-supabase-seed.js` regenerates `supabase/seed.sql` |
 
 See [`supabase/README.md`](supabase/README.md) for the backend: schema, the
-Firestore→Postgres mapping, deployment and the current migration status.
+Firestore→Postgres mapping, deployment and migration status.
 
 ## Architecture
 
-Business logic lives in the database, not in either client:
+Business logic lives in the database, not in the client:
 
 - **RLS policies + column grants** enforce who can read and write what. A user
   cannot make themselves a subscriber because `authenticated` holds an UPDATE
@@ -33,36 +34,21 @@ Business logic lives in the database, not in either client:
 - **pg_cron** runs the two scheduled jobs (expiring stale payments, releasing
   held affiliate commissions).
 
-A client is therefore UI, state and thin service calls. That is what makes
-running two clients against one backend practical during the rewrite.
+The client is therefore UI, state and thin service calls — which is what made
+running the RN and Flutter apps against one backend practical during the
+rewrite.
 
 ### One thing to know before touching a paywalled read
 
 Firestore rules **rejected** an unauthorised read. Postgres RLS **filters** —
 an unsubscribed query succeeds and returns zero rows, which is
 indistinguishable from an empty table. Every paywalled read therefore checks
-subscription state explicitly before querying (`requireSubscription` in the RN
-services, `_requireSubscription` in `CatalogueService`). Without it the paywall
+subscription state explicitly before querying (`_requireSubscription` in `CatalogueService`). Without it the paywall
 silently stops working.
 
-## Running the React Native app
+## Running the app
 
 ```bash
-npm install
-
-export EXPO_PUBLIC_SUPABASE_URL=https://YOUR_REF.supabase.co
-export EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_ANON_KEY
-
-npm run android   # or: npm run ios
-```
-
-The anon key is safe to ship — RLS is what protects the data. Google client IDs
-live under `expo.extra.google` in `app.json`.
-
-## Running the Flutter app
-
-```bash
-cd flutter_app
 flutter pub get
 
 flutter run \
@@ -74,8 +60,8 @@ flutter run \
 `GOOGLE_SERVER_CLIENT_ID` must be the **web** client id even on Android — it is
 what Google audiences the ID token to, and Supabase validates that audience.
 
-Screens not yet ported render a labelled placeholder, so the app is navigable
-end to end while the port is in progress.
+All 28 screens are ported. Nothing has yet been run against a live
+Supabase project, so expect first-run defects.
 
 ## Subscription plans
 
