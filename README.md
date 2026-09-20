@@ -1,157 +1,89 @@
 # AfyaSmart
 
-Expo app backed by Firebase Authentication, Cloud Firestore, and Firebase Cloud
-Functions.
+A health companion app for the Kenyan market: AI symptom checking, a doctor and
+pharmacy directory, a drug reference, M-Pesa subscriptions and an affiliate
+referral programme.
 
-## Firebase setup
+A Flutter app on a Supabase backend. The original Expo/React Native client
+was removed once the Flutter port reached screen parity — see the history
+before the "Remove the React Native app" commit if you need it.
 
-Create a Firebase project, enable Email/Password and Google sign-in, and create
-a Firestore database. Then add these values to your Expo environment:
+| Directory | What it is |
+|---|---|
+| `lib/` | The Flutter app: `core/`, `models/`, `services/`, `state/`, `features/` |
+| `supabase/` | Postgres schema, RLS policies, RPCs and edge functions |
+| `assets/seed/` | Doctor, drug and pharmacy catalogue data |
+| `assets/branding/` | App icon and splash source art |
+| `scripts/` | `build-supabase-seed.js` regenerates `supabase/seed.sql` |
 
-```bash
-EXPO_PUBLIC_FIREBASE_API_KEY=...
-EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=...
-EXPO_PUBLIC_FIREBASE_PROJECT_ID=...
-EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=...
-EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
-EXPO_PUBLIC_FIREBASE_APP_ID=...
-EXPO_PUBLIC_FIREBASE_FUNCTIONS_REGION=us-central1
-EXPO_PUBLIC_FIREBASE_FUNCTIONS_BASE_URL=https://us-central1-afya-smart-377ad.cloudfunctions.net
-EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=...
-EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID=...
-EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=...
-```
+See [`supabase/README.md`](supabase/README.md) for the backend: schema, the
+Firestore→Postgres mapping, deployment and migration status.
 
-You can also place the same values in `app.json` under
-`expo.extra.firebase`.
+## Architecture
 
-For Google sign-in, enable `Authentication > Sign-in method > Google` in the
-Firebase Console. Then add OAuth client IDs from Google Cloud Console. During
-development, the web client ID is usually enough for Expo Go; native builds
-should use Android/iOS client IDs with the app package/bundle identifiers.
+Business logic lives in the database, not in the client:
 
-## Firestore collections
+- **RLS policies + column grants** enforce who can read and write what. A user
+  cannot make themselves a subscriber because `authenticated` holds an UPDATE
+  grant on only three columns of `users`.
+- **Security-definer RPCs** own everything money touches — `activate_subscription`,
+  `request_payout`, `enroll_affiliate`, the `admin_*` family. Clients call them;
+  they never write those rows directly.
+- **Edge functions** (`chat`, `mpesa`, `symptoms`) hold the OpenAI and Safaricom
+  credentials and are the only code that talks to those APIs.
+- **pg_cron** runs the two scheduled jobs (expiring stale payments, releasing
+  held affiliate commissions).
 
-- `users/{uid}` stores auth profile, subscription fields, and `chat_count`.
-- `users/{uid}/chatMessages/{messageId}` stores app-friendly chat messages.
-- `users/{uid}/chatLogs/{logId}` stores Laravel-style chat request/reply logs
-  written by Cloud Functions.
-- `doctors/{doctorId}` stores doctor directory records.
-- `drugs/{drugId}` stores local medicine records.
-- `pharmacies/{pharmacyId}` stores pharmacy directory records.
-- `paymentRequests/{checkoutRequestId}` stores M-Pesa payment requests created
-  and updated by Cloud Functions.
+The client is therefore UI, state and thin service calls — which is what made
+running the RN and Flutter apps against one backend practical during the
+rewrite.
 
-## Subscription model
+### One thing to know before touching a paywalled read
 
-The app treats a user as subscribed only when:
+Firestore rules **rejected** an unauthorised read. Postgres RLS **filters** —
+an unsubscribed query succeeds and returns zero rows, which is
+indistinguishable from an empty table. Every paywalled read therefore checks
+subscription state explicitly before querying (`_requireSubscription` in `CatalogueService`). Without it the paywall
+silently stops working.
 
-- `users/{uid}.is_subscribed` is `true`
-- `users/{uid}.subscription_expires_at` is empty or in the future
-
-Free users can sign in, finish onboarding, open Home/Profile/Chat, and use the
-free chat allowance. Premium routes such as symptoms, drugs, doctors,
-pharmacies, diagnosis results, and nearby services redirect to the subscription
-screen until the user pays.
-
-Successful M-Pesa confirmation updates the Firebase user document:
-
-```json
-{
-  "is_subscribed": true,
-  "subscription_plan": "daily | weekly | monthly",
-  "chat_count": 0,
-  "subscription_expires_at": "ISO date string"
-}
-```
-
-## Seed Firestore
-
-The old Laravel seeders can be exported to JSON and imported into Firestore.
-
-Export from the Laravel API repo:
+## Running the app
 
 ```bash
-php scripts/export-laravel-seeders.php D:\Project\AfyaSmart-API
+flutter pub get
+
+flutter run \
+  --dart-define=SUPABASE_URL=https://YOUR_REF.supabase.co \
+  --dart-define=SUPABASE_ANON_KEY=YOUR_ANON_KEY \
+  --dart-define=GOOGLE_SERVER_CLIENT_ID=YOUR_WEB_CLIENT_ID
 ```
 
-This writes:
+`GOOGLE_SERVER_CLIENT_ID` must be the **web** client id even on Android — it is
+what Google audiences the ID token to, and Supabase validates that audience.
 
-- `seed-data/doctors.json`
-- `seed-data/drugs.json`
-- `seed-data/pharmacies.json`
+All 28 screens are ported. Nothing has yet been run against a live
+Supabase project, so expect first-run defects.
 
-To import into Firestore, create a Firebase service account key from:
+## Subscription plans
 
-```text
-Firebase Console > Project settings > Service accounts > Generate new private key
-```
+| Plan | Price (KES) | Duration |
+|---|---|---|
+| Daily | 20 | 1 day |
+| Weekly | 100 | 7 days |
+| Monthly | 200 | 1 month |
 
-Then run:
+Unsubscribed users get 5 free AI chats and 3 free symptom checks per day. Both
+limits are enforced server-side; the clients only pre-check them to avoid a
+wasted round-trip.
 
-```bash
-set GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
-cd functions
-npm run seed
-cd ..
-```
+Payment runs through M-Pesa STK push. The outcome is always re-derived from
+Safaricom's own API rather than trusted from the callback body, because the
+`CheckoutRequestID` in that callback is also handed to the paying client — so a
+forged `{ ResultCode: 0 }` would otherwise be trivial.
 
-In PowerShell, use:
+## Affiliate programme
 
-```powershell
-$env:GOOGLE_APPLICATION_CREDENTIALS="C:\path\to\service-account.json"
-cd functions
-npm run seed
-cd ..
-```
-
-The importer writes to `doctors`, `drugs`, and `pharmacies` using stable document
-IDs based on email, phone, or name, so rerunning it updates existing seed data.
-
-## Cloud Functions
-
-The Firebase Functions in `functions/index.js` mimic the old Laravel API:
-
-- `chatSend`, `chatStatus`, `chatHistory`
-- `mpesaInitiate`, `mpesaStatus`, `mpesaCallback`
-
-Install function dependencies:
-
-```bash
-cd functions
-npm install
-cd ..
-```
-
-Set M-Pesa secrets before deploying:
-
-```bash
-firebase functions:secrets:set MPESA_CONSUMER_KEY
-firebase functions:secrets:set MPESA_CONSUMER_SECRET
-firebase functions:secrets:set MPESA_PASSKEY
-firebase functions:secrets:set MPESA_SHORTCODE
-firebase functions:secrets:set MPESA_CALLBACK_URL
-firebase functions:secrets:set MPESA_ENV
-```
-
-Use `sandbox` or `production` for `MPESA_ENV`. Set `MPESA_CALLBACK_URL` to:
-
-```text
-https://us-central1-afya-smart-377ad.cloudfunctions.net/mpesaCallback
-```
-
-Deploy:
-
-```bash
-firebase deploy --only firestore:rules,functions
-```
-
-M-Pesa Cloud Functions generally require the Firebase Blaze plan because they
-make outbound requests to Safaricom Daraja.
-
-## Run
-
-```bash
-npm install
-npx expo start
-```
+Referrers earn **30%** of each successful subscription by a user who signed up
+with their code, held for **7 days** before becoming withdrawable. Minimum
+withdrawal is KES 100. Balances are only ever moved by database functions, so a
+retried M-Pesa callback cannot double-credit and a double-clicked rejection
+cannot double-refund.
