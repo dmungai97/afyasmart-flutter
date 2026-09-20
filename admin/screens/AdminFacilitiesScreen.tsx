@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
@@ -15,6 +14,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Sidebar from "../components/Sidebar";
 import {
@@ -395,11 +395,12 @@ export default function AdminFacilitiesScreen() {
         visible={showModal !== "none"}
         animationType="slide"
         transparent
+        statusBarTranslucent
         onRequestClose={() => setShowModal("none")}
       >
         <KeyboardAvoidingView
           style={styles.modalKeyboard}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          behavior="padding"
           keyboardVerticalOffset={0}
         >
           <View style={styles.modalOverlay}>

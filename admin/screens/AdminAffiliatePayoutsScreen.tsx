@@ -96,7 +96,7 @@ export default function AdminAffiliatePayoutsScreen() {
           onPress: async () => {
             setRejecting(p.id);
             try {
-              await rejectAffiliatePayout(p.id, p.affiliateUid, p.amount);
+              await rejectAffiliatePayout(p.id);
               await load();
             } catch {
               Alert.alert("Error", "Failed to reject payout.");

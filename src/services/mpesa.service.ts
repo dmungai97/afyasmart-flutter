@@ -1,31 +1,11 @@
-import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { firebaseAuth } from "./firebase";
+import { functionsBaseUrl, getAccessToken } from "./supabase";
 import { useAuthStore } from "../store/authStore";
 
-type FirebaseExtra = {
-  mpesaApiBaseUrl?: string;
-  functionsBaseUrl?: string;
-  useFirebaseFunctions?: boolean;
-  useSupabaseFunctions?: boolean;
-};
-const extra = (Constants.expoConfig?.extra?.firebase ?? {}) as FirebaseExtra;
-
-// The Supabase mpesa Edge Function writes paymentRequests (and activates
-// subscriptions) server-side, so the client never has to. It's the default
-// unless Firebase Cloud Functions are explicitly selected: the Firebase
-// mpesaInitiate/mpesaStatus functions require the Blaze billing plan to even
-// deploy, so this app doesn't run them — see supabase/functions/mpesa.
-const USE_SUPABASE_FUNCTIONS =
-  process.env.EXPO_PUBLIC_USE_SUPABASE_FUNCTIONS === "true" || extra.useSupabaseFunctions === true;
-
-const USE_FIREBASE_FUNCTIONS =
-  !USE_SUPABASE_FUNCTIONS &&
-  (process.env.EXPO_PUBLIC_USE_FIREBASE_FUNCTIONS === "true" || extra.useFirebaseFunctions === true);
-
-const mpesaApiBaseUrl = USE_FIREBASE_FUNCTIONS
-  ? (process.env.EXPO_PUBLIC_FUNCTIONS_BASE_URL ?? extra.functionsBaseUrl ?? "https://us-central1-afya-smart-377ad.cloudfunctions.net")
-  : (process.env.EXPO_PUBLIC_SUPABASE_FUNCTIONS_BASE_URL ?? extra.mpesaApiBaseUrl ?? "");
+// The three-way branch between Firebase Functions, Supabase Functions and a
+// hardcoded fallback URL is gone — there is one backend, and the path shapes
+// ("/mpesa/initiate", "/mpesa/status") are what the edge function already
+// serves, so no path remapping is needed either.
 
 const checkoutPlans = new Map<string, string>();
 const lastCheckoutKey = "mpesa_last_checkout_request_id";
@@ -33,32 +13,21 @@ const lastCheckoutKey = "mpesa_last_checkout_request_id";
 const checkoutPlanKey = (checkoutRequestId: string) =>
   `mpesa_checkout_plan:${checkoutRequestId}`;
 
-// Supabase uses the "/mpesa/initiate" & "/mpesa/status" path shape as-is; the
-// Firebase Functions backend needs its path remapped to "/mpesaInitiate"/
-// "/mpesaStatus".
 const requestMpesaBackend = async <T>(
   path: string,
   body: Record<string, unknown>,
   token: string | null,
 ): Promise<T> => {
-  const idToken = token ?? (await firebaseAuth.currentUser?.getIdToken());
+  const accessToken = token ?? (await getAccessToken());
 
-  let resolvedPath = path;
-  if (USE_FIREBASE_FUNCTIONS) {
-    if (path === "/mpesa/initiate") resolvedPath = "/mpesaInitiate";
-    else if (path === "/mpesa/status") resolvedPath = "/mpesaStatus";
-  }
-
-  const response = await fetch(`${mpesaApiBaseUrl}${resolvedPath}`, {
+  const response = await fetch(`${functionsBaseUrl}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
-    body: JSON.stringify({
-      ...body,
-      firebase_uid: firebaseAuth.currentUser?.uid,
-    }),
+    // The caller's identity comes from the verified access token alone.
+    body: JSON.stringify(body),
   });
 
   const data = await response.json().catch(() => null);
@@ -103,12 +72,11 @@ export const pollMpesaStatus = async (
       checkoutPlans.get(checkoutRequestId) ??
       (await AsyncStorage.getItem(checkoutPlanKey(checkoutRequestId)));
 
-    // Subscription activation always happens server-side (Admin SDK, verified
-    // against the actual M-Pesa result) — just pull the fresh users/{uid} doc
-    // into local state. A client-side fallback here would let anyone grant
-    // themselves a subscription without paying; Firestore rules block it too
-    // (see isSafeUserUpdate in firestore.rules), but this is intentionally
-    // not attempted at all.
+    // Subscription activation always happens server-side, verified against
+    // the actual M-Pesa result — just pull the fresh users row into local
+    // state. A client-side fallback here would let anyone grant themselves a
+    // subscription without paying; the column grants in the RLS migration
+    // block it too, but this is intentionally not attempted at all.
     await useAuthStore.getState().refreshUser(token ?? "");
 
     if (plan) {

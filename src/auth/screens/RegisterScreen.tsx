@@ -1,7 +1,5 @@
 import React, { memo, useRef, useState } from "react";
 import {
-    KeyboardAvoidingView,
-    Platform,
     ScrollView,
     StatusBar,
     StyleSheet,
@@ -10,6 +8,8 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import Constants from "expo-constants";
@@ -68,7 +68,9 @@ const Field = memo(
         <TextInput
           style={styles.input}
           placeholder={placeholder}
-          placeholderTextColor="#bbb"
+          placeholderTextColor="#9AA7A7"
+          selectionColor={TEAL}
+          cursorColor={TEAL}
           value={value}
           onChangeText={onChangeText}
           keyboardType={keyboardType}
@@ -90,6 +92,7 @@ const Field = memo(
 Field.displayName = "Field";
 
 export function RegisterScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { plan, ref } = useLocalSearchParams<{ plan?: string; ref?: string }>();
 
@@ -109,7 +112,7 @@ export function RegisterScreen() {
 
   const isSubmitting = useRef(false);
 
-  const googleExtra = (Constants.expoConfig?.extra?.firebase ?? {}) as GoogleExtra;
+  const googleExtra = (Constants.expoConfig?.extra?.google ?? {}) as GoogleExtra;
   const googleWebClientId =
     process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ??
     googleExtra.googleWebClientId;
@@ -254,7 +257,7 @@ export function RegisterScreen() {
       style={styles.container}
       behavior="padding"
     >
-      <StatusBar barStyle="light-content" backgroundColor={TEAL_DARK} />
+      <StatusBar barStyle="light-content" backgroundColor={TEAL_DARK} translucent />
 
       {/* Background */}
       <View style={styles.background}>
@@ -288,12 +291,12 @@ export function RegisterScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, { paddingBottom: Math.max(insets.bottom, 24) }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
-        <View style={styles.top}>
+        <View style={[styles.top, { paddingTop: Math.max(insets.top, 36) + 32 }]}>
           <View style={styles.logoWrap}>
             <View style={styles.logoOuter}>
               <View style={styles.logoInner}>
@@ -614,21 +617,28 @@ const styles = StyleSheet.create({
   inputWrap: {
     flexDirection: "row",
     alignItems: "center",
-    height: 56,
-    backgroundColor: "#f7faf9",
+    minHeight: 56,
+    backgroundColor: "#F4F8F7",
     borderWidth: 1.5,
-    borderColor: "#E5E7EB",
+    borderColor: "#E3E9E9",
     borderRadius: 16,
     marginBottom: 14,
     overflow: "hidden",
   },
   inputWrapFocused: {
+    // Colour only — a borderWidth change here relayouts the focused field's
+    // container at the exact moment Android's IME is opening, which makes
+    // the keyboard pop up and immediately close again.
     borderColor: TEAL,
     backgroundColor: "#fff",
   },
   iconWrap: {
     width: 48,
-    height: "100%",
+    // alignSelf: "stretch" fills the row's height without needing a
+    // *definite* height on the parent — "100%" here doesn't resolve
+    // reliably against inputWrap's minHeight-only (auto) height, and on
+    // Android that collapsed the whole field's layout to nothing.
+    alignSelf: "stretch",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -637,13 +647,14 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    fontSize: 14,
-    color: "#1a1a1a",
+    fontSize: 15,
+    color: "#12201F",
     paddingHorizontal: 14,
+    paddingVertical: 14,
   },
   eyeBtn: {
     paddingHorizontal: 14,
-    height: "100%",
+    alignSelf: "stretch",
     justifyContent: "center",
   },
   btnPrimary: {

@@ -1,15 +1,5 @@
 import { create } from 'zustand';
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  orderBy,
-  query,
-  where,
-} from 'firebase/firestore';
-import { firebaseAuth, firestore } from '@/src/services/firebase';
-import { callFunction, FunctionApiError } from '@/src/services/functionsApi';
+import { supabase, getCurrentUserId } from '@/src/services/supabase';
 
 export interface Referral {
   id: string;
@@ -35,9 +25,8 @@ export interface Withdrawal {
   mpesaNumber: string;
 }
 
-const formatDate = (value: any): string => {
-  const date =
-    typeof value?.toDate === 'function' ? value.toDate() : value ? new Date(value) : null;
+const formatDate = (value: string | null | undefined): string => {
+  const date = value ? new Date(value) : null;
   if (!date || Number.isNaN(date.getTime())) return 'Recent';
   return new Intl.DateTimeFormat('en-KE', {
     day: '2-digit',
@@ -105,7 +94,7 @@ export const useAffiliateStore = create<AffiliateState>((set, get) => ({
   ...emptyState,
 
   load: async () => {
-    const uid = firebaseAuth.currentUser?.uid;
+    const uid = await getCurrentUserId();
     if (!uid) {
       set({ ...emptyState });
       return;
@@ -113,42 +102,46 @@ export const useAffiliateStore = create<AffiliateState>((set, get) => ({
 
     set({ loading: true });
 
-    const affiliateSnap = await getDoc(doc(firestore, 'affiliates', uid));
-    if (!affiliateSnap.exists()) {
+    const { data: affiliate } = await supabase
+      .from('affiliates')
+      .select('*')
+      .eq('id', uid)
+      .maybeSingle();
+
+    if (!affiliate) {
       set({ ...emptyState, loading: false });
       return;
     }
 
-    const affiliate = affiliateSnap.data();
-
-    const [referralsSnap, earningsSnap, payoutsSnap] = await Promise.all([
-      getDocs(query(collection(firestore, 'users'), where('referred_by_uid', '==', uid))),
-      getDocs(
-        query(
-          collection(firestore, 'commissions'),
-          where('affiliate_uid', '==', uid),
-          orderBy('created_at', 'desc'),
-        ),
-      ),
-      getDocs(
-        query(
-          collection(firestore, 'payoutRequests'),
-          where('affiliate_uid', '==', uid),
-          orderBy('created_at', 'desc'),
-        ),
-      ),
+    // RLS scopes each of these to this affiliate (users_select allows reading
+    // the users you referred; commissions_select and payout_requests_select
+    // match on affiliate_id), so the filters are for clarity, not security.
+    const [referralsRes, earningsRes, payoutsRes] = await Promise.all([
+      supabase
+        .from('users')
+        .select('id, name, is_subscribed, created_at')
+        .eq('referred_by_uid', uid),
+      supabase
+        .from('commissions')
+        .select('id, referred_id, plan, amount, commission_amount, created_at')
+        .eq('affiliate_id', uid)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('payout_requests')
+        .select('id, amount, phone, status, created_at')
+        .eq('affiliate_id', uid)
+        .order('created_at', { ascending: false }),
     ]);
 
     const referredNameByUid = new Map<string, string>();
-    const referrals: Referral[] = referralsSnap.docs.map((d) => {
-      const data = d.data();
-      const name = data.name ?? data.displayName ?? 'AfyaSmart User';
-      referredNameByUid.set(d.id, name);
+    const referrals: Referral[] = (referralsRes.data ?? []).map((row: any) => {
+      const name = row.name ?? 'AfyaSmart User';
+      referredNameByUid.set(row.id, name);
       return {
-        id: d.id,
+        id: row.id,
         name,
-        status: data.is_subscribed ? 'Active' : 'Inactive',
-        joinedDate: formatDate(data.created_at),
+        status: row.is_subscribed ? 'Active' : 'Inactive',
+        joinedDate: formatDate(row.created_at),
       };
     });
 
@@ -167,38 +160,33 @@ export const useAffiliateStore = create<AffiliateState>((set, get) => ({
     let earningsThisWeek = 0;
     let earningsThisMonth = 0;
 
-    const earnings: Earning[] = earningsSnap.docs.map((d) => {
-      const data = d.data();
-      const commission = Number(data.commission_amount ?? 0);
-      const createdAt =
-        typeof data.created_at?.toDate === 'function' ? data.created_at.toDate() : null;
+    const earnings: Earning[] = (earningsRes.data ?? []).map((row: any) => {
+      const commission = Number(row.commission_amount ?? 0);
+      const createdAt = row.created_at ? new Date(row.created_at) : null;
 
-      if (createdAt) {
+      if (createdAt && !Number.isNaN(createdAt.getTime())) {
         if (createdAt >= startOfToday) earningsToday += commission;
         if (createdAt >= startOfWeek) earningsThisWeek += commission;
         if (createdAt >= startOfMonth) earningsThisMonth += commission;
       }
 
       return {
-        id: d.id,
-        name: referredNameByUid.get(data.referred_uid) ?? 'Referred user',
-        planName: planLabel(data.plan),
-        amount: Number(data.amount ?? 0),
+        id: row.id,
+        name: referredNameByUid.get(row.referred_id) ?? 'Referred user',
+        planName: planLabel(row.plan),
+        amount: Number(row.amount ?? 0),
         commission,
-        date: formatDate(data.created_at),
+        date: formatDate(row.created_at),
       };
     });
 
-    const withdrawals: Withdrawal[] = payoutsSnap.docs.map((d) => {
-      const data = d.data();
-      return {
-        id: d.id,
-        amount: Number(data.amount ?? 0),
-        date: formatDate(data.created_at),
-        status: payoutStatusLabel(data.status ?? 'pending'),
-        mpesaNumber: data.phone ?? '',
-      };
-    });
+    const withdrawals: Withdrawal[] = (payoutsRes.data ?? []).map((row: any) => ({
+      id: row.id,
+      amount: Number(row.amount ?? 0),
+      date: formatDate(row.created_at),
+      status: payoutStatusLabel(row.status ?? 'pending'),
+      mpesaNumber: row.phone ?? '',
+    }));
 
     set({
       loading: false,
@@ -221,22 +209,25 @@ export const useAffiliateStore = create<AffiliateState>((set, get) => ({
   },
 
   enroll: async () => {
-    try {
-      await callFunction('enrollAffiliate', { method: 'POST' });
-      await get().load();
-      return { success: true };
-    } catch (error) {
-      const message =
-        error instanceof FunctionApiError
-          ? error.message
-          : 'Could not enroll as an affiliate. Please try again.';
-      return { success: false, message };
+    const { error } = await supabase.rpc('enroll_affiliate');
+
+    if (error) {
+      return {
+        success: false,
+        message: error.message || 'Could not enroll as an affiliate. Please try again.',
+      };
     }
+
+    await get().load();
+    return { success: true };
   },
 
   addWithdrawal: async (amount: number, mpesaNumber: string) => {
     const { availableBalance } = get();
 
+    // Client-side guards for a fast, friendly message. request_payout
+    // re-checks both authoritatively, and deducts the balance under a row
+    // lock so two concurrent withdrawals cannot both succeed.
     if (amount <= 0 || amount < 100) {
       return { success: false, message: 'Minimum withdrawal amount is Ksh 100.' };
     }
@@ -244,16 +235,19 @@ export const useAffiliateStore = create<AffiliateState>((set, get) => ({
       return { success: false, message: 'You do not have enough available balance.' };
     }
 
-    try {
-      await callFunction('requestPayout', { method: 'POST', body: { amount, phone: mpesaNumber } });
-      await get().load();
-      return { success: true };
-    } catch (error) {
-      const message =
-        error instanceof FunctionApiError
-          ? error.message
-          : 'Unable to process withdrawal request.';
-      return { success: false, message };
+    const { error } = await supabase.rpc('request_payout', {
+      p_amount: amount,
+      p_phone: mpesaNumber,
+    });
+
+    if (error) {
+      return {
+        success: false,
+        message: error.message || 'Unable to process withdrawal request.',
+      };
     }
+
+    await get().load();
+    return { success: true };
   },
 }));

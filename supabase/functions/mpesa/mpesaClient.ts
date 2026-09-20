@@ -38,13 +38,9 @@ export function planAmount(plan: string | undefined): number | null {
   return null;
 }
 
-export function getSubscriptionExpiry(plan: string): Date {
-  const expiresAt = new Date();
-  if (plan === "monthly") expiresAt.setMonth(expiresAt.getMonth() + 1);
-  else if (plan === "weekly") expiresAt.setDate(expiresAt.getDate() + 7);
-  else expiresAt.setDate(expiresAt.getDate() + 1);
-  return expiresAt;
-}
+// getSubscriptionExpiry() lived here too, but expiry is now computed by
+// subscription_expiry() in the database, where activate_subscription() uses
+// it. Keeping a second copy here would let the two drift apart.
 
 // Safaricom Daraja STK push result codes that mean the payment is
 // definitively done for (insufficient funds, wrong PIN too many times,

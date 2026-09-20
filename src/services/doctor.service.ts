@@ -1,5 +1,6 @@
-import { collection, doc, getDoc, getDocs } from "firebase/firestore";
-import { firestore } from "./firebase";
+import { supabase, PaywallError } from "./supabase";
+import { getCurrentUserProfile } from "./auth.service";
+import { isSubscriptionActive } from "./subscription.model";
 
 const seededDoctors = require("../../seed-data/doctors.json") as any[];
 
@@ -32,37 +33,21 @@ export interface ListResponse {
   data: string[];
 }
 
-const numericId = (id: string, index = 0) => {
-  const parsed = Number(id);
-  return Number.isFinite(parsed) ? parsed : index + 1;
-};
-
-// Firestore rejects doctors reads for non-subscribers (see hasActiveSubscription()
-// in firestore.rules) — that denial must propagate as an error, not be swallowed
-// into the bundled seed data below, or the paywall does nothing.
-const isPermissionDenied = (error: unknown) =>
-  (error as { code?: string } | null)?.code === "permission-denied";
-
-const distanceKm = (
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number,
-) => {
+const distanceKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
   const toRad = (value: number) => (value * Math.PI) / 180;
   const radius = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) ** 2;
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-const mapDoctor = (id: string, data: any, index = 0): Doctor => ({
-  id: numericId(id, index),
+const mapDoctor = (data: any, index = 0): Doctor => ({
+  // Postgres ids are already numbers, so the numericId() coercion the
+  // Firestore document ids needed is gone. Seed rows still index from 1.
+  id: Number(data.id ?? index + 1),
   name: data.name ?? "",
   specialization: data.specialization ?? "",
   hospital: data.hospital ?? "",
@@ -78,12 +63,31 @@ const mapDoctor = (id: string, data: any, index = 0): Doctor => ({
   available: Boolean(data.available),
 });
 
+/**
+ * The paywall gate.
+ *
+ * Firestore rules REJECTED an unauthorised read, so these services could
+ * detect `permission-denied` and let it propagate past the seed-data
+ * fallback. Postgres RLS does not reject — it filters, so a non-subscriber's
+ * query succeeds and returns zero rows, which is indistinguishable from an
+ * empty table. Falling back to seed data on empty would therefore hand the
+ * full directory to everyone.
+ *
+ * So the check is explicit and happens first. `doctors_select` in the RLS
+ * migration still enforces it server-side; this only makes the client fail
+ * the same way it used to.
+ */
+const requireSubscription = async () => {
+  const user = await getCurrentUserProfile();
+  if (!isSubscriptionActive(user)) throw new PaywallError();
+};
+
 // Local-only, unauthenticated doctor list — used by screens (e.g. the map)
 // that intentionally show generic seeded data to everyone regardless of
 // subscription. Never route this through anything that also serves the
 // paywalled directory (fetchNearbyDoctors below).
 export const fetchSeededDoctors = (): Doctor[] =>
-  seededDoctors.map((item, index) => mapDoctor(String(index + 1), item, index));
+  seededDoctors.map((item, index) => mapDoctor({ ...item, id: index + 1 }, index));
 
 export const fetchNearbyDoctors = async (
   token: string,
@@ -98,63 +102,40 @@ export const fetchNearbyDoctors = async (
   },
 ): Promise<DoctorsResponse> => {
   void token;
-  let docs: Doctor[] = [];
-  try {
-    const snap = await getDocs(collection(firestore, "doctors"));
-    docs = snap.docs.map((item, index) =>
-      mapDoctor(item.id, item.data(), index),
+  await requireSubscription();
+
+  // Filtering that used to happen in JS over every document now runs in the
+  // query. Only the distance sort stays client-side.
+  let query = supabase.from("doctors").select("*");
+
+  if (options?.available !== undefined) query = query.eq("available", options.available);
+  if (options?.region) query = query.ilike("region", options.region.trim());
+  if (options?.specialization) {
+    query = query.ilike("specialization", options.specialization.trim());
+  }
+  if (options?.search) {
+    const term = `%${options.search.trim()}%`;
+    query = query.or(
+      `name.ilike.${term},specialization.ilike.${term},` +
+        `hospital.ilike.${term},location.ilike.${term},region.ilike.${term}`,
     );
-  } catch (error) {
-    if (isPermissionDenied(error)) throw error;
-    docs = [];
   }
 
-  const search = options?.search?.toLowerCase().trim();
-  const region = options?.region?.toLowerCase().trim();
-  const specialization = options?.specialization?.toLowerCase().trim();
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
 
-  let doctors = docs.length > 0 ? docs : fetchSeededDoctors();
-
-  doctors = doctors.filter((doctor) => {
-    if (options?.available !== undefined && doctor.available !== options.available) {
-      return false;
-    }
-    if (region && doctor.region?.toLowerCase() !== region) return false;
-    if (specialization && doctor.specialization.toLowerCase() !== specialization) {
-      return false;
-    }
-    if (search) {
-      const haystack = [
-        doctor.name,
-        doctor.specialization,
-        doctor.hospital,
-        doctor.location,
-        doctor.region,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      if (!haystack.includes(search)) return false;
-    }
-    return true;
-  });
+  let doctors = (data ?? []).map((item, index) => mapDoctor(item, index));
 
   if (options?.lat != null && options?.lng != null) {
     doctors = doctors
       .map((doctor) => ({
         ...doctor,
         distance_km: Number(
-          distanceKm(
-            options.lat!,
-            options.lng!,
-            doctor.latitude,
-            doctor.longitude,
-          ).toFixed(1),
+          distanceKm(options.lat!, options.lng!, doctor.latitude, doctor.longitude).toFixed(1),
         ),
       }))
       .filter(
-        (doctor) =>
-          options.radius == null || (doctor.distance_km ?? Infinity) <= options.radius,
+        (doctor) => options.radius == null || (doctor.distance_km ?? Infinity) <= options.radius,
       )
       .sort((a, b) => (a.distance_km ?? 0) - (b.distance_km ?? 0));
   }
@@ -164,57 +145,64 @@ export const fetchNearbyDoctors = async (
 
 export const fetchDoctor = async (id: number, token: string): Promise<Doctor> => {
   void token;
-  try {
-    const snap = await getDoc(doc(firestore, "doctors", String(id)));
-    if (snap.exists()) return mapDoctor(snap.id, snap.data());
-  } catch (error) {
-    if (isPermissionDenied(error)) throw error;
-    // Fall back to bundled seed data below.
-  }
+  await requireSubscription();
 
-  const doctor = seededDoctors[id - 1];
-  if (!doctor) throw new Error("Doctor not found.");
-  return mapDoctor(String(id), doctor, id - 1);
+  const { data, error } = await supabase
+    .from("doctors")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Doctor not found.");
+
+  return mapDoctor(data);
+};
+
+/**
+ * Distinct region/specialization lists.
+ *
+ * These deliberately do NOT require a subscription: they populate the filter
+ * chips on the doctors screen, which renders (behind the paywall) before any
+ * directory data is fetched. They read from the bundled seed data rather than
+ * the database, because RLS would return an empty list to exactly the
+ * non-subscribers who need the chips rendered.
+ */
+const seededValues = (field: "region" | "specialization"): string[] => {
+  const values = new Set<string>();
+  seededDoctors.forEach((item) => {
+    const value = item[field];
+    if (value) {
+      values.add(
+        field === "region" ? value.charAt(0).toUpperCase() + value.slice(1) : value,
+      );
+    }
+  });
+  return [...values].sort();
 };
 
 export const fetchRegions = async (token: string): Promise<string[]> => {
   void token;
-  let items: any[] = [];
-  try {
-    const snap = await getDocs(collection(firestore, "doctors"));
-    items = snap.docs.map((item) => item.data());
-  } catch (error) {
-    if (isPermissionDenied(error)) throw error;
-    items = [];
-  }
-
-  if (items.length === 0) items = seededDoctors;
+  const { data, error } = await supabase.from("doctors").select("region");
+  if (error || !data?.length) return seededValues("region");
 
   const regions = new Set<string>();
-  items.forEach((item) => {
-    const region = item.region;
-    if (region) regions.add(region.charAt(0).toUpperCase() + region.slice(1));
+  data.forEach((item: { region: string | null }) => {
+    if (item.region) regions.add(item.region.charAt(0).toUpperCase() + item.region.slice(1));
   });
-  return [...regions].sort();
+  return regions.size > 0 ? [...regions].sort() : seededValues("region");
 };
 
 export const fetchSpecializations = async (token: string): Promise<string[]> => {
   void token;
-  let items: any[] = [];
-  try {
-    const snap = await getDocs(collection(firestore, "doctors"));
-    items = snap.docs.map((item) => item.data());
-  } catch (error) {
-    if (isPermissionDenied(error)) throw error;
-    items = [];
-  }
-
-  if (items.length === 0) items = seededDoctors;
+  const { data, error } = await supabase.from("doctors").select("specialization");
+  if (error || !data?.length) return seededValues("specialization");
 
   const specializations = new Set<string>();
-  items.forEach((item) => {
-    const specialization = item.specialization;
-    if (specialization) specializations.add(specialization);
+  data.forEach((item: { specialization: string | null }) => {
+    if (item.specialization) specializations.add(item.specialization);
   });
-  return [...specializations].sort();
+  return specializations.size > 0
+    ? [...specializations].sort()
+    : seededValues("specialization");
 };

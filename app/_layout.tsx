@@ -1,18 +1,18 @@
 import { Slot, useRouter, useSegments } from "expo-router";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import { useEffect, useState } from "react";
-import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { useAuthStore } from "../src/store/authStore";
-import { firebaseAuth } from "../src/services/firebase";
+import { supabase } from "../src/services/supabase";
 import { isSubscriptionActive } from "../src/services/subscription.model";
 
-const waitForFirebaseAuth = () =>
-  new Promise<FirebaseUser | null>((resolve) => {
-    let unsubscribe = () => {};
-    unsubscribe = onAuthStateChanged(firebaseAuth, (firebaseUser) => {
-      unsubscribe();
-      resolve(firebaseUser);
-    });
-  });
+// onAuthStateChanged existed only to wait out Firebase's async session
+// rehydration before deciding where to route. supabase-js exposes the
+// restored session directly, so a single awaited read replaces the
+// subscribe-once-then-unsubscribe dance.
+const waitForSession = async () => {
+  const { data } = await supabase.auth.getSession();
+  return data.session;
+};
 
 export default function RootLayout() {
   const token = useAuthStore((s) => s.token);
@@ -31,13 +31,12 @@ export default function RootLayout() {
 
     const hydrateAuth = async () => {
       await loadAuth();
-      const firebaseUser = await waitForFirebaseAuth();
+      const session = await waitForSession();
       const currentToken = useAuthStore.getState().token;
       const cachedUser = useAuthStore.getState().user;
 
-      if (firebaseUser) {
-        const idToken = currentToken ?? (await firebaseUser.getIdToken());
-        await refreshUser(idToken);
+      if (session) {
+        await refreshUser(currentToken ?? session.access_token);
         return;
       }
 
@@ -177,5 +176,9 @@ export default function RootLayout() {
 
   if (!authLoaded) return null;
 
-  return <Slot />;
+  return (
+    <KeyboardProvider>
+      <Slot />
+    </KeyboardProvider>
+  );
 }

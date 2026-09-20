@@ -1,0 +1,98 @@
+[
+    {
+        "name": "Amoxicillin",
+        "generic_name": "Amoxicillin",
+        "category": "Antibiotic",
+        "uses": "Treats bacterial infections including pneumonia, ear infections, UTIs, and skin infections.",
+        "dosage": "Adults: 250-500mg every 8 hours. Children: 25mg/kg/day in divided doses.",
+        "side_effects": "Nausea, diarrhea, rash, allergic reactions.",
+        "pregnancy_safe": true,
+        "alcohol_safe": false,
+        "lactation_safe": true,
+        "prescription_required": "Yes"
+    },
+    {
+        "name": "Paracetamol",
+        "generic_name": "Acetaminophen",
+        "category": "Analgesic / Antipyretic",
+        "uses": "Relieves mild to moderate pain and reduces fever.",
+        "dosage": "Adults: 500-1000mg every 4-6 hours. Max 4g/day. Children: 10-15mg/kg every 4-6 hours.",
+        "side_effects": "Rarely causes side effects at normal doses. Overdose can cause liver damage.",
+        "pregnancy_safe": true,
+        "alcohol_safe": false,
+        "lactation_safe": true,
+        "prescription_required": "No"
+    },
+    {
+        "name": "Metformin",
+        "generic_name": "Metformin Hydrochloride",
+        "category": "Antidiabetic",
+        "uses": "Controls blood sugar levels in type 2 diabetes.",
+        "dosage": "Adults: 500mg twice daily with meals. Max 2000mg/day.",
+        "side_effects": "Nausea, vomiting, diarrhea, stomach upset.",
+        "pregnancy_safe": false,
+        "alcohol_safe": false,
+        "lactation_safe": false,
+        "prescription_required": "Yes"
+    },
+    {
+        "name": "Ibuprofen",
+        "generic_name": "Ibuprofen",
+        "category": "NSAID / Anti-inflammatory",
+        "uses": "Reduces pain, fever and inflammation. Used for headaches, arthritis, menstrual cramps.",
+        "dosage": "Adults: 200-400mg every 4-6 hours. Max 1200mg/day without prescription.",
+        "side_effects": "Stomach upset, heartburn, nausea, increased bleeding risk.",
+        "pregnancy_safe": false,
+        "alcohol_safe": false,
+        "lactation_safe": false,
+        "prescription_required": "No"
+    },
+    {
+        "name": "Ciprofloxacin",
+        "generic_name": "Ciprofloxacin",
+        "category": "Antibiotic",
+        "uses": "Treats urinary tract infections, respiratory infections, typhoid fever.",
+        "dosage": "Adults: 250-750mg twice daily for 7-14 days.",
+        "side_effects": "Nausea, diarrhea, dizziness, tendon damage with prolonged use.",
+        "pregnancy_safe": false,
+        "alcohol_safe": false,
+        "lactation_safe": false,
+        "prescription_required": "Yes"
+    },
+    {
+        "name": "Artemether/Lumefantrine",
+        "generic_name": "Artemether + Lumefantrine",
+        "category": "Antimalarial",
+        "uses": "First-line treatment for uncomplicated malaria in Kenya.",
+        "dosage": "Adults: 4 tablets at 0, 8, 24, 36, 48, 60 hours (6 doses total).",
+        "side_effects": "Headache, dizziness, nausea, vomiting, loss of appetite.",
+        "pregnancy_safe": false,
+        "alcohol_safe": false,
+        "lactation_safe": true,
+        "prescription_required": "Yes"
+    },
+    {
+        "name": "Omeprazole",
+        "generic_name": "Omeprazole",
+        "category": "Proton Pump Inhibitor",
+        "uses": "Treats acid reflux, stomach ulcers, and heartburn.",
+        "dosage": "Adults: 20-40mg once daily before meals.",
+        "side_effects": "Headache, nausea, diarrhea, stomach pain.",
+        "pregnancy_safe": false,
+        "alcohol_safe": false,
+        "lactation_safe": false,
+        "prescription_required": "No"
+    },
+    {
+        "name": "Amlodipine",
+        "generic_name": "Amlodipine Besylate",
+        "category": "Calcium Channel Blocker",
+        "uses": "Treats high blood pressure and chest pain (angina).",
+        "dosage": "Adults: 5-10mg once daily.",
+        "side_effects": "Swelling of ankles, flushing, headache, dizziness.",
+        "pregnancy_safe": false,
+        "alcohol_safe": false,
+        "lactation_safe": false,
+        "prescription_required": "Yes"
+    }
+]

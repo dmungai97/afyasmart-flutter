@@ -1,3 +1,7 @@
+import {
+  KeyboardAwareScrollView,
+  KeyboardProvider,
+} from "react-native-keyboard-controller";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -11,11 +15,9 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  KeyboardAvoidingView,
-  Platform,
 } from "react-native";
-import { doc, onSnapshot } from "firebase/firestore";
-import { firestore } from "@/src/services/firebase";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { supabase } from "@/src/services/supabase";
 import {
   checkLatestMpesaPayment,
   initiateMpesa,
@@ -104,6 +106,7 @@ const PLANS: Plan[] = [
 type PayStep = "form" | "waiting" | "confirmed" | "failed";
 
 export function SubscriptionScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { plan: planParam } = useLocalSearchParams<{ plan?: string }>();
   const token = useAuthStore((state) => state.token);
@@ -261,12 +264,26 @@ export function SubscriptionScreen() {
       );
     }, 90000);
 
-    const docRef = doc(firestore, "paymentRequests", id);
-    const unsubscribe = onSnapshot(
-      docRef,
-      async (snapshot) => {
-        if (!snapshot.exists()) return;
-        const data = snapshot.data();
+    // Firestore's onSnapshot becomes a filtered Postgres replication stream.
+    // RLS (payment_requests_select) is what keeps this to the caller's own
+    // payment; the filter just narrows what arrives.
+    const channel = supabase
+      .channel(`payment:${id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "payment_requests",
+          filter: `checkout_request_id=eq.${id}`,
+        },
+        async (payload) => {
+        const data = payload.new as {
+          paid?: boolean;
+          status?: string;
+          result?: { ResultDesc?: string } | null;
+        };
+        if (!data) return;
 
         if (data.paid === true || data.status === "paid") {
           try {
@@ -284,21 +301,26 @@ export function SubscriptionScreen() {
         } else if (data.status === "cancelled") {
           stopPaymentWatchers();
           setPayStep("failed");
-          const reason = data.result?.ResultDesc ?? data.callback?.ResultDesc ?? "You cancelled the M-Pesa request.";
-          Alert.alert("Payment Cancelled", reason);
+          Alert.alert(
+            "Payment Cancelled",
+            data.result?.ResultDesc ?? "You cancelled the M-Pesa request.",
+          );
         } else if (data.status === "failed") {
           stopPaymentWatchers();
           setPayStep("failed");
-          const reason = data.result?.ResultDesc ?? data.callback?.ResultDesc ?? "M-Pesa payment failed.";
-          Alert.alert("Payment Failed", reason);
+          Alert.alert(
+            "Payment Failed",
+            data.result?.ResultDesc ?? "M-Pesa payment failed.",
+          );
         }
-      },
-      (error) => {
-        console.error("Firestore onSnapshot error in SubscriptionScreen:", error);
-      }
-    );
+        },
+      )
+      .subscribe();
 
-    unsubscribeRef.current = unsubscribe;
+    // stopPaymentWatchers() calls this like any other unsubscribe function.
+    unsubscribeRef.current = () => {
+      supabase.removeChannel(channel);
+    };
   };
 
   const handleRetry = () => {
@@ -417,7 +439,9 @@ export function SubscriptionScreen() {
             <TextInput
               style={styles.phoneInput}
               placeholder="07XX XXX XXX"
-              placeholderTextColor="#aaa"
+              placeholderTextColor="#9AA7A7"
+              selectionColor="#0B6E6E"
+              cursorColor="#0B6E6E"
               value={phone}
               onChangeText={setPhone}
               keyboardType="phone-pad"
@@ -655,35 +679,40 @@ export function SubscriptionScreen() {
       <Modal
         visible={showPayment}
         animationType="slide"
+        statusBarTranslucent
         onRequestClose={() => payStep === "form" && setShowPayment(false)}
       >
-        <KeyboardAvoidingView
-          style={styles.modalRoot}
-          behavior="padding"
-        >
-          <View style={styles.modalHeader}>
-            <TouchableOpacity
-              onPress={() =>
-                payStep === "form" ? setShowPayment(false) : handleRetry()
-              }
-              style={styles.modalBack}
-            >
-              <Ionicons name="arrow-back" size={20} color="#1a1a1a" />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Complete Payment</Text>
-            <View style={{ width: 32 }} />
-          </View>
+        <KeyboardProvider>
+          <View style={styles.modalRoot}>
+            <View style={[styles.modalHeader, { paddingTop: Math.max(insets.top, 16) + 12 }]}>
+              <TouchableOpacity
+                onPress={() =>
+                  payStep === "form" ? setShowPayment(false) : handleRetry()
+                }
+                style={styles.modalBack}
+              >
+                <Ionicons name="arrow-back" size={20} color="#1a1a1a" />
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Complete Payment</Text>
+              <View style={{ width: 32 }} />
+            </View>
 
-          <ScrollView contentContainerStyle={styles.modalContent}>
-            {renderPaymentContent()}
-          </ScrollView>
-        </KeyboardAvoidingView>
+            <KeyboardAwareScrollView
+              contentContainerStyle={styles.modalContent}
+              keyboardShouldPersistTaps="handled"
+              bottomOffset={24}
+            >
+              {renderPaymentContent()}
+            </KeyboardAwareScrollView>
+          </View>
+        </KeyboardProvider>
       </Modal>
 
       {/* Success Modal */}
       <Modal
         visible={showSuccess}
         animationType="fade"
+        statusBarTranslucent
         onRequestClose={handleDone}
       >
         <View style={styles.successRoot}>
@@ -877,14 +906,15 @@ const styles = StyleSheet.create({
   phonePrefix: { fontSize: 14, fontWeight: "600", color: "#1a1a1a" },
   phoneInput: {
     flex: 1,
-    backgroundColor: "#fff",
+    minHeight: 52,
+    backgroundColor: "#F4F8F8",
     borderWidth: 1.5,
-    borderColor: "#E5E7EB",
+    borderColor: "#DCE3E3",
     borderRadius: 12,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 15,
-    color: "#1a1a1a",
+    color: "#12201F",
   },
   stepsCard: {
     backgroundColor: "#fff",

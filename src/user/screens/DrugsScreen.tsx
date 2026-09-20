@@ -169,7 +169,9 @@ export function DrugsScreen() {
           <TextInput
             style={styles.searchInput}
             placeholder="Search medicine..."
-            placeholderTextColor="#aaa"
+            placeholderTextColor="#9AA7A7"
+            selectionColor={TEAL}
+            cursorColor={TEAL}
             value={query}
             onChangeText={setQuery}
             onSubmitEditing={() => handleSearch()}
@@ -212,6 +214,8 @@ export function DrugsScreen() {
           keyExtractor={(item) => item.id.toString()}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           ListHeaderComponent={
             filtered.length > 0 ? (
               <View style={styles.resultsHeader}>
@@ -312,7 +316,7 @@ export function DrugsScreen() {
       )}
 
       {/* ── Detail Modal ── */}
-      <Modal visible={!!selected} animationType="slide" onRequestClose={() => setSelected(null)}>
+      <Modal visible={!!selected} animationType="slide" statusBarTranslucent onRequestClose={() => setSelected(null)}>
         {selected && (
           <View style={styles.modal}>
             <View style={styles.modalHeader}>
@@ -438,11 +442,12 @@ const styles = StyleSheet.create({
   },
   searchWrap: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#fff', borderRadius: 12,
-    paddingHorizontal: 12, height: 44, gap: 8,
+    backgroundColor: '#fff', borderRadius: 14,
+    paddingHorizontal: 14, minHeight: 50, gap: 8,
+    borderWidth: 1.5, borderColor: '#DCE3E3',
   },
   searchIcon:  { marginRight: 2 },
-  searchInput: { flex: 1, fontSize: 14, color: '#1a1a1a' },
+  searchInput: { flex: 1, fontSize: 15, color: '#12201F', paddingVertical: 12 },
 
   // Chips
   chipsWrap: { backgroundColor: '#fff', borderBottomWidth: 0.5, borderBottomColor: '#eee' },

@@ -1,36 +1,9 @@
-import Constants from "expo-constants";
-import {
-  collection,
-  getDocs,
-  limit as limitQuery,
-  orderBy,
-  query,
-} from "firebase/firestore";
-import { firebaseAuth, firestore } from "./firebase";
-import { callFunction, FunctionApiError } from "./functionsApi";
+import { supabase, functionsBaseUrl, getAccessToken, getCurrentUserId } from "./supabase";
 import {
   FREE_CHAT_LIMIT,
   canUseFreeChats,
   isSubscriptionActive,
 } from "./subscription.model";
-
-type FirebaseExtra = {
-  mpesaApiBaseUrl?: string;
-  useSupabaseFunctions?: boolean;
-};
-const extra = (Constants.expoConfig?.extra?.firebase ?? {}) as FirebaseExtra;
-
-// chatSend went through Firebase Cloud Functions (via callFunction below),
-// which requires the Blaze billing plan to deploy at all. The Supabase
-// "chat" Edge Function (supabase/functions/chat) covers the same route —
-// see mpesa.service.ts for the same reasoning. Reuses the mpesaApiBaseUrl
-// field since it's really "the non-Firebase functions base URL" now, shared
-// across mpesa/symptoms/chat.
-const USE_SUPABASE_FUNCTIONS =
-  process.env.EXPO_PUBLIC_USE_SUPABASE_FUNCTIONS === "true" || extra.useSupabaseFunctions === true;
-
-const supabaseFunctionsBaseUrl =
-  process.env.EXPO_PUBLIC_SUPABASE_FUNCTIONS_BASE_URL ?? extra.mpesaApiBaseUrl ?? "";
 
 export interface ChatMessage {
   role: "user" | "ai";
@@ -67,17 +40,17 @@ export class ChatLimitError extends Error {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-const requireUid = () => {
-  const uid = firebaseAuth.currentUser?.uid;
-  if (!uid) throw new Error("You must be signed in to use chat.");
-  return uid;
+const requireUserId = async () => {
+  const id = await getCurrentUserId();
+  if (!id) throw new Error("You must be signed in to use chat.");
+  return id;
 };
 
 export const getChatStatus = async (
   token: string | null,
 ): Promise<ChatStatusResponse> => {
   void token;
-  requireUid();
+  await requireUserId();
 
   const { getCurrentUserProfile } = await import("./auth.service");
   const user = await getCurrentUserProfile();
@@ -103,76 +76,67 @@ export const sendMessage = async (
   history: ChatMessage[] = [],
 ): Promise<SendMessageResponse> => {
   void token;
-  requireUid();
+  await requireUserId();
 
-  // Pre-flight limit check using local profile (fast, avoids a round-trip)
+  // Pre-flight limit check using the local profile (fast, avoids a
+  // round-trip). The edge function re-checks authoritatively.
   const status = await getChatStatus(null);
   if (!status.is_subscribed && status.limit_reached) {
     throw new ChatLimitError();
   }
 
-  // Delegate AI reply to the chat backend (OpenAI key stays server-side)
-  try {
-    if (USE_SUPABASE_FUNCTIONS) {
-      const idToken = await firebaseAuth.currentUser?.getIdToken();
-      const response = await fetch(`${supabaseFunctionsBaseUrl}/chat/send`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-        },
-        body: JSON.stringify({ message, history }),
-      });
-      const data = await response.json().catch(() => null);
+  // The dual Firebase-Functions / Supabase-Functions branch is gone: there is
+  // only one backend now. The OpenAI key stays server-side either way.
+  const accessToken = await getAccessToken();
+  const response = await fetch(`${functionsBaseUrl}/chat/send`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    body: JSON.stringify({ message, history }),
+  });
 
-      if (!response.ok) {
-        if (response.status === 403 && data?.limit_reached) {
-          throw new ChatLimitError();
-        }
-        throw new Error(data?.message ?? "Chat request failed.");
-      }
+  const data = await response.json().catch(() => null);
 
-      return data as SendMessageResponse;
-    }
-
-    return await callFunction<SendMessageResponse>("chatSend", {
-      body: { message, history },
-    });
-  } catch (error) {
-    if (error instanceof ChatLimitError) throw error;
-    if (error instanceof FunctionApiError && error.status === 403 && error.data?.limit_reached) {
-      throw new ChatLimitError();
-    }
-    throw error;
+  if (!response.ok) {
+    if (response.status === 403 && data?.limit_reached) throw new ChatLimitError();
+    throw new Error(data?.message ?? "Chat request failed.");
   }
+
+  return data as SendMessageResponse;
 };
 
-// Firestore Timestamp values expose .toDate() once resolved; a doc read back
-// immediately after a serverTimestamp() write can briefly have it as null
-// (pending server confirmation), so this falls back gracefully.
-const formatMessageTime = (value: unknown): string => {
-  const date = (value as { toDate?: () => Date } | null | undefined)?.toDate?.();
-  return date ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+const formatMessageTime = (value: string | null): string => {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? ""
+    : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 };
 
 export const getChatHistory = async (
   token: string | null,
 ): Promise<ChatHistoryResponse> => {
   void token;
-  const uid = requireUid();
+  const userId = await requireUserId();
 
-  // Chat history is stored in Firestore by the React Native app itself
-  const q = query(
-    collection(firestore, "users", uid, "chatMessages"),
-    orderBy("created_at", "asc"),
-    limitQuery(100),
-  );
-  const snap = await getDocs(q);
+  // chat_messages_select scopes this to the caller's own rows, so the
+  // user_id filter is belt-and-braces rather than the security boundary.
+  const { data, error } = await supabase
+    .from("chat_messages")
+    .select("role, text, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true })
+    .limit(100);
+
+  if (error) throw new Error(error.message);
 
   return {
-    messages: snap.docs.map((item) => {
-      const data = item.data();
-      return { role: data.role, text: data.text, time: formatMessageTime(data.created_at) } as ChatMessage;
-    }),
+    messages: (data ?? []).map((item) => ({
+      role: item.role,
+      text: item.text,
+      time: formatMessageTime(item.created_at),
+    })) as ChatMessage[],
   };
 };

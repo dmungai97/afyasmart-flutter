@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  StatusBar, ScrollView, KeyboardAvoidingView, Platform,
+  StatusBar, ScrollView, Platform,
   Animated, ActivityIndicator, Keyboard,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -73,6 +74,11 @@ export function SymptomChatScreen() {
 
   const scrollRef  = useRef<ScrollView>(null);
   const inputRef   = useRef<TextInput>(null);
+  // Counts consecutive too-short submissions so the "tell me a bit more"
+  // nudge only ever shows once — without this, someone who keeps typing
+  // short answers gets the identical canned message appended again on every
+  // attempt, which reads as the chat being stuck/broken rather than nudging.
+  const shortAttempts = useRef(0);
   const dotAnim1   = useRef(new Animated.Value(0)).current;
   const dotAnim2   = useRef(new Animated.Value(0)).current;
   const dotAnim3   = useRef(new Animated.Value(0)).current;
@@ -194,7 +200,10 @@ export function SymptomChatScreen() {
     if (!text || stage !== 'symptom') return;
 
     const wordCount = text.split(/\s+/).filter(Boolean).length;
-    if (wordCount < MIN_SYMPTOM_WORDS) {
+    if (wordCount < MIN_SYMPTOM_WORDS && shortAttempts.current === 0) {
+      // Nudge once. If they submit another short answer right after, don't
+      // repeat the identical message again — just proceed with it below.
+      shortAttempts.current += 1;
       setInput('');
       setMessages((prev) => [
         ...prev,
@@ -208,6 +217,7 @@ export function SymptomChatScreen() {
       return;
     }
 
+    shortAttempts.current = 0;
     setInput('');
     setSymptomText(text);
     setMessages((prev) => [...prev, { role: 'user', text }]);
@@ -281,12 +291,11 @@ export function SymptomChatScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.root}
-      // See ChatScreen.tsx for why this is Android-only: app.json's
-      // android.softwareKeyboardLayoutMode: "resize" already makes the OS
-      // shrink the window on Android, and stacking KeyboardAvoidingView's
-      // own padding on top of that is what caused the keyboard/input
-      // inconsistency across Android devices. iOS and web still need it.
-      behavior={Platform.OS === 'android' ? undefined : 'padding'}
+      // KeyboardAvoidingView from react-native-keyboard-controller follows the
+      // real IME frame on every platform, including Android under Expo SDK 54's
+      // forced edge-to-edge window. "padding" keeps the composer above the
+      // keyboard consistently across devices.
+      behavior="padding"
       keyboardVerticalOffset={0}
     >
       <StatusBar barStyle="light-content" backgroundColor={INK} />
@@ -409,21 +418,18 @@ export function SymptomChatScreen() {
                 : 'Choose an option above'
           }
           placeholderTextColor={INK_FAINT}
+          selectionColor={ACCENT}
+          cursorColor={ACCENT}
           multiline
           maxLength={500}
           editable={stage === 'symptom' && !sending}
           onSubmitEditing={handleSendSymptom}
           returnKeyType="send"
           onFocus={() => {
-            // Web has no real virtual keyboard — DOM focus fires here on
-            // every platform, but only iOS/Android should treat it as "the
-            // keyboard is now covering part of the screen". See
-            // ChatScreen.tsx for the same fix and why it's needed.
-            if (Platform.OS !== 'web') setKeyboardShown(true);
+            // Only nudge the transcript back into view. The keyboard frame is
+            // handled by KeyboardAvoidingView; changing layout here on focus
+            // used to race the IME open on Android and drop the keyboard.
             scrollToBottom();
-          }}
-          onBlur={() => {
-            if (Platform.OS !== 'web') setKeyboardShown(false);
           }}
         />
         <TouchableOpacity
@@ -508,13 +514,15 @@ const styles = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: RULE,
   },
   input: {
-    flex: 1, backgroundColor: PAPER, borderRadius: 4,
-    paddingHorizontal: 14, paddingVertical: 10,
-    fontSize: 14, color: INK, maxHeight: 100,
-    borderWidth: 1, borderColor: RULE,
+    flex: 1, minHeight: 46, backgroundColor: '#FFFFFF', borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 13 : 9,
+    paddingBottom: Platform.OS === 'ios' ? 13 : 9,
+    fontSize: 15, color: INK, maxHeight: 120,
+    borderWidth: 1.5, borderColor: RULE_STRONG,
   },
   sendBtn: {
-    width: 42, height: 42, borderRadius: 21,
+    width: 46, height: 46, borderRadius: 23,
     backgroundColor: INK,
     alignItems: 'center', justifyContent: 'center',
   },

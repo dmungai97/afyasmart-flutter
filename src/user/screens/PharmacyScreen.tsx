@@ -68,7 +68,9 @@ export function PharmacyScreen() {
         <TextInput
           style={styles.searchInput}
           placeholder="Search pharmacy or location..."
-          placeholderTextColor="#aaa"
+          placeholderTextColor="#9AA7A7"
+          selectionColor={TEAL}
+          cursorColor={TEAL}
           value={search}
           onChangeText={setSearch}
           onSubmitEditing={handleSearch}
@@ -87,6 +89,8 @@ export function PharmacyScreen() {
           data={pharmacies}
           keyExtractor={(item) => item.id.toString()}
           contentContainerStyle={styles.list}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           ListEmptyComponent={
             accessLocked ? (
               <View style={styles.empty}>
@@ -133,7 +137,7 @@ export function PharmacyScreen() {
       )}
 
       {/* Detail Modal */}
-      <Modal visible={!!selected} animationType="slide" onRequestClose={() => setSelected(null)}>
+      <Modal visible={!!selected} animationType="slide" statusBarTranslucent onRequestClose={() => setSelected(null)}>
         {selected && (
           <View style={styles.modal}>
             <View style={styles.modalHeader}>
@@ -215,14 +219,15 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    backgroundColor: '#f7f9f9',
-    borderWidth: 0.5,
-    borderColor: '#ddd',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: '#1a1a1a',
+    minHeight: 48,
+    backgroundColor: '#F4F8F8',
+    borderWidth: 1.5,
+    borderColor: '#DCE3E3',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#12201F',
   },
   searchBtn: {
     backgroundColor: TEAL,

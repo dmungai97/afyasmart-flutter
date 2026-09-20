@@ -1,13 +1,9 @@
-import { collection, doc, getDoc, getDocs } from "firebase/firestore";
-import { firestore } from "./firebase";
+import { supabase, PaywallError } from "./supabase";
+import { getCurrentUserProfile } from "./auth.service";
+import { isSubscriptionActive } from "./subscription.model";
 
-const numericId = (id: string, index = 0) => {
-  const parsed = Number(id);
-  return Number.isFinite(parsed) ? parsed : index + 1;
-};
-
-const mapDrug = (id: string, data: any, index = 0) => ({
-  id: numericId(id, index),
+const mapDrug = (data: any, index = 0) => ({
+  id: Number(data.id ?? index + 1),
   name: data.name ?? "",
   generic_name: data.generic_name ?? "",
   category: data.category ?? "Other",
@@ -20,25 +16,38 @@ const mapDrug = (id: string, data: any, index = 0) => ({
   prescription_required: data.prescription_required ?? "Yes",
 });
 
+// See the note on requireSubscription() in doctor.service.ts.
+const requireSubscription = async () => {
+  const user = await getCurrentUserProfile();
+  if (!isSubscriptionActive(user)) throw new PaywallError();
+};
+
 export const searchDrugs = async (query: string, token: string) => {
   void token;
-  const snap = await getDocs(collection(firestore, "drugs"));
-  const search = query.toLowerCase().trim();
-  const data = snap.docs
-    .map((item, index) => mapDrug(item.id, item.data(), index))
-    .filter((drug) =>
-      [drug.name, drug.generic_name, drug.category, drug.uses]
-        .join(" ")
-        .toLowerCase()
-        .includes(search),
-    );
+  await requireSubscription();
 
-  return { status: "success", count: data.length, data };
+  // This used to fetch every drug and filter in JS. search_drugs() runs the
+  // same match server-side against a GIN index, and is not security definer,
+  // so the paywall policy still applies to its results.
+  const { data, error } = await supabase.rpc("search_drugs", { q: query ?? "" });
+  if (error) throw new Error(error.message);
+
+  const drugs = (data ?? []).map((item: any, index: number) => mapDrug(item, index));
+  return { status: "success", count: drugs.length, data: drugs };
 };
 
 export const getDrug = async (id: number, token: string) => {
   void token;
-  const snap = await getDoc(doc(firestore, "drugs", String(id)));
-  if (!snap.exists()) throw new Error("Drug not found.");
-  return { status: "success", data: mapDrug(snap.id, snap.data()) };
+  await requireSubscription();
+
+  const { data, error } = await supabase
+    .from("drugs")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Drug not found.");
+
+  return { status: "success", data: mapDrug(data) };
 };

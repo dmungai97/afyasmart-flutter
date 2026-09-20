@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
@@ -15,8 +14,8 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { DocumentData, QueryDocumentSnapshot } from "firebase/firestore";
 import Sidebar from "../components/Sidebar";
 import {
   AdminUser,
@@ -89,7 +88,7 @@ export default function AdminUsersScreen() {
   const [filtered, setFiltered] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [cursor, setCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [cursor, setCursor] = useState<number | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -499,10 +498,10 @@ export default function AdminUsersScreen() {
       </ScrollView>
 
       {/* Edit Modal */}
-      <Modal visible={!!editTarget} animationType="slide" transparent onRequestClose={() => setEditTarget(null)}>
+      <Modal visible={!!editTarget} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setEditTarget(null)}>
         <KeyboardAvoidingView
           style={styles.modalKeyboard}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          behavior="padding"
           keyboardVerticalOffset={0}
         >
           <View style={styles.modalOverlay}>

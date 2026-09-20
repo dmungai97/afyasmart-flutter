@@ -1,6 +1,5 @@
-import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { firebaseAuth } from "./firebase";
+import { functionsBaseUrl, getCurrentUserId } from "./supabase";
 
 export interface SymptomsAnalysisRequest {
   symptoms: string[];
@@ -39,36 +38,11 @@ export interface SymptomsClarifyResponse {
   duration?: string;
 }
 
-type FirebaseExtra = {
-  mpesaApiBaseUrl?: string;
-  functionsBaseUrl?: string;
-  useFirebaseFunctions?: boolean;
-  useSupabaseFunctions?: boolean;
-};
-const extra = (Constants.expoConfig?.extra?.firebase ?? {}) as FirebaseExtra;
-
-// The Supabase "symptoms" Edge Function requires the Blaze-free deployment
-// path Firebase's symptomsAnalyze/symptomsClarify can't use — see
-// mpesa.service.ts for the full reasoning. Takes priority over
-// useFirebaseFunctions the same way.
-const USE_SUPABASE_FUNCTIONS =
-  process.env.EXPO_PUBLIC_USE_SUPABASE_FUNCTIONS === "true" || extra.useSupabaseFunctions === true;
-
-// Defaults to the Supabase Edge Function path unless Firebase Cloud Functions
-// are explicitly selected (they need the Blaze plan to deploy).
-const USE_FIREBASE_FUNCTIONS =
-  !USE_SUPABASE_FUNCTIONS &&
-  (process.env.EXPO_PUBLIC_USE_FIREBASE_FUNCTIONS === "true" || extra.useFirebaseFunctions === true);
-
-const symptomsApiBaseUrl = USE_FIREBASE_FUNCTIONS
-  ? (process.env.EXPO_PUBLIC_FUNCTIONS_BASE_URL ?? extra.functionsBaseUrl ?? "https://us-central1-afya-smart-377ad.cloudfunctions.net")
-  : (process.env.EXPO_PUBLIC_SUPABASE_FUNCTIONS_BASE_URL ?? extra.mpesaApiBaseUrl ?? "");
-
 // Onboarding lets users check symptoms before creating an account, so these
 // endpoints identify the caller by a locally persisted guest id rather than
-// requiring a Firebase Auth session.
-const resolveFirebaseUid = async (): Promise<string> => {
-  const existing = firebaseAuth.currentUser?.uid;
+// requiring a session.
+const resolveSubjectId = async (): Promise<string> => {
+  const existing = await getCurrentUserId();
   if (existing) return existing;
 
   const guestUuid = await AsyncStorage.getItem("guest_uuid");
@@ -80,18 +54,14 @@ const resolveFirebaseUid = async (): Promise<string> => {
 };
 
 export const requestSymptomsAnalysis = async (
-  input: Omit<SymptomsAnalysisRequest, "firebase_uid">,
+  input: SymptomsAnalysisRequest,
 ): Promise<SymptomsAnalysisResponse> => {
-  const firebase_uid = await resolveFirebaseUid();
+  const subjectId = await resolveSubjectId();
 
-  const endpoint = USE_FIREBASE_FUNCTIONS
-    ? `${symptomsApiBaseUrl}/symptomsAnalyze`
-    : `${symptomsApiBaseUrl}/symptoms/analyze`;
-
-  const response = await fetch(endpoint, {
+  const response = await fetch(`${functionsBaseUrl}/symptoms/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...input, firebase_uid }),
+    body: JSON.stringify({ ...input, subject_id: subjectId }),
   });
 
   const body = await response.json().catch(() => null);
@@ -107,9 +77,8 @@ export const requestSymptomsAnalysis = async (
   throw new Error("Invalid response format received from the server.");
 };
 
-// Best-effort — only available on the Firebase Functions and Supabase Edge
-// Function paths, and fails safe to `{ done: true }` on any error so a
-// flaky/unreachable endpoint never blocks the onboarding funnel. Callers
+// Best-effort — fails safe to `{ done: true }` on any error so a flaky or
+// unreachable endpoint never blocks the onboarding funnel. Callers
 // should treat a missing `duration` on a `done: true` result as
 // "clarification wasn't available", not "the user has no symptom duration".
 export const requestSymptomsClarification = async (params: {
@@ -118,19 +87,13 @@ export const requestSymptomsClarification = async (params: {
   severity: string;
   history: { question: string; answer: string }[];
 }): Promise<SymptomsClarifyResponse> => {
-  if (!USE_FIREBASE_FUNCTIONS && !USE_SUPABASE_FUNCTIONS) {
-    return { done: true };
-  }
-
-  const clarifyPath = USE_FIREBASE_FUNCTIONS ? "/symptomsClarify" : "/symptoms/clarify";
-
   try {
-    const firebase_uid = await resolveFirebaseUid();
+    const subjectId = await resolveSubjectId();
 
-    const response = await fetch(`${symptomsApiBaseUrl}${clarifyPath}`, {
+    const response = await fetch(`${functionsBaseUrl}/symptoms/clarify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ firebase_uid, ...params }),
+      body: JSON.stringify({ subject_id: subjectId, ...params }),
     });
 
     const body = await response.json().catch(() => null);

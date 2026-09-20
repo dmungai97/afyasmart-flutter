@@ -47,13 +47,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await AsyncStorage.setItem("user", JSON.stringify(updatedUser));
     if (hasOnboarded) {
       await AsyncStorage.setItem("hasCompletedOnboarding", "true");
-      await AsyncStorage.removeItem("isNewUser");
-    } else if (isNew) {
-      // Persisted (not just in-memory) so the "force this brand-new account
-      // through onboarding" gate in app/_layout.tsx survives the app being
-      // closed/killed before onboarding actually finishes.
-      await AsyncStorage.setItem("isNewUser", "true");
     }
+    // isNewUser is intentionally in-memory only (see loadAuth below) — it
+    // drives the one-time "send this brand-new account into onboarding"
+    // redirect right after registration, for the current app session only.
+    await AsyncStorage.removeItem("isNewUser");
     set({
       token,
       user: updatedUser,
@@ -76,7 +74,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { logoutUser } = await import("../services/auth.service");
       await logoutUser();
     } catch {
-      // Local state should still clear if Firebase sign-out is unavailable.
+      // Local state should still clear if sign-out is unavailable.
     }
 
     await clearPersistedAuth();
@@ -90,19 +88,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   loadAuth: async () => {
     try {
-      // Firebase Auth's own SDK persists the real session — this store never
-      // writes a "token" key to AsyncStorage (the in-memory token here is
-      // always re-derived fresh via refreshUser()), so there's nothing to
-      // clear. token starts null below regardless.
+      // supabase-js persists the real session in AsyncStorage itself — this
+      // store never writes a "token" key (the in-memory token here is always
+      // re-derived fresh via refreshUser()), so there's nothing to clear.
+      // token starts null below regardless.
       const raw = await AsyncStorage.getItem("user");
       const onboarded = await AsyncStorage.getItem("hasCompletedOnboarding");
-      const isNewUserStored = await AsyncStorage.getItem("isNewUser");
       const user: User | null = raw ? JSON.parse(raw) : null;
+      // isNewUser is never restored from storage on a cold start. It only
+      // exists to nudge a brand-new registration into the onboarding survey
+      // once, in that same live session. Restoring it as true here used to
+      // mean any registered user who reopened the app before finishing that
+      // survey got bounced back to the "welcome" screen and a blank chat on
+      // every single launch, indefinitely — effectively "forgetting" a real,
+      // already-registered account.
       set({
         token: null,
         user,
         hasCompletedOnboarding: onboarded === "true" || Boolean(user?.onboarding_completed),
-        isNewUser: isNewUserStored === "true",
+        isNewUser: false,
       });
     } catch {
       await clearPersistedAuth();
@@ -124,24 +128,30 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (updated) await AsyncStorage.setItem("user", JSON.stringify(updated));
     set({ user: updated, hasCompletedOnboarding: true, isNewUser: false });
 
-    if (current) {
-      try {
-        const { markOnboardingCompleted } = await import("../services/auth.service");
-        await markOnboardingCompleted();
-      } catch {
-        // Keep local completion even if Firestore is temporarily unavailable.
-      }
+    // The onboarding survey normally finishes (LockedResultsScreen) before
+    // the user has registered, so `current`/get().user is usually still
+    // null here — gating this call on it meant the server's
+    // onboarding_completed field was never written for the ordinary signup
+    // flow. markOnboardingCompleted() already no-ops safely if nobody is
+    // signed in yet; setAuth() re-attempts this same sync once they do
+    // register or log in, using the "true" flag persisted just above.
+    try {
+      const { markOnboardingCompleted } = await import("../services/auth.service");
+      await markOnboardingCompleted();
+    } catch {
+      // Keep local completion even if the database is temporarily unavailable.
     }
   },
 
-  // Call after login/payment to sync latest user state from Firebase
+  // Call after login/payment to sync latest user state from Supabase
   refreshUser: async (token: string) => {
     try {
       const { getCurrentUserProfile } = await import("../services/auth.service");
-      const { firebaseAuth } = await import("../services/firebase");
-      const current = firebaseAuth.currentUser;
+      const { supabase } = await import("../services/supabase");
+      const { data: sessionData } = await supabase.auth.getSession();
+      const session = sessionData.session;
 
-      if (!current) {
+      if (!session) {
         await clearPersistedAuth();
         set({
           token: null,
@@ -155,7 +165,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const user = await getCurrentUserProfile();
       if (!user) return;
 
-      const freshToken = await current.getIdToken();
+      // supabase-js refreshes the access token itself, so this is a read of
+      // the current session rather than a mint like getIdToken() was.
+      const freshToken = session.access_token;
       const hasOnboarded = get().hasCompletedOnboarding || user.onboarding_completed;
       const updatedUser = { ...user, onboarding_completed: hasOnboarded };
 

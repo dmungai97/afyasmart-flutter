@@ -1,21 +1,11 @@
-import { collection, getDocs } from "firebase/firestore";
-import { firestore } from "./firebase";
+import { supabase, PaywallError } from "./supabase";
+import { getCurrentUserProfile } from "./auth.service";
+import { isSubscriptionActive } from "./subscription.model";
 
 const seededPharmacies = require("../../seed-data/pharmacies.json") as any[];
 
-const numericId = (id: string, index = 0) => {
-  const parsed = Number(id);
-  return Number.isFinite(parsed) ? parsed : index + 1;
-};
-
-// Firestore rejects pharmacies reads for non-subscribers (see hasActiveSubscription()
-// in firestore.rules) — that denial must propagate as an error, not be swallowed
-// into the bundled seed data below, or the paywall does nothing.
-const isPermissionDenied = (error: unknown) =>
-  (error as { code?: string } | null)?.code === "permission-denied";
-
-const mapPharmacy = (id: string, data: any, index = 0) => ({
-  id: numericId(id, index),
+const mapPharmacy = (data: any, index = 0) => ({
+  id: Number(data.id ?? index + 1),
   name: data.name ?? "",
   location: data.location ?? "",
   address: data.address ?? "",
@@ -33,35 +23,32 @@ const mapPharmacy = (id: string, data: any, index = 0) => ({
 // subscription. Never route this through anything that also serves the
 // paywalled directory (getPharmacies below).
 export const fetchSeededPharmacies = () =>
-  seededPharmacies.map((item, index) => mapPharmacy(String(index + 1), item, index));
+  seededPharmacies.map((item, index) => mapPharmacy({ ...item, id: index + 1 }, index));
+
+// See the long note on requireSubscription() in doctor.service.ts: RLS
+// filters rather than rejects, so an unsubscribed read returns zero rows
+// instead of an error. Without this explicit check the seed-data fallback
+// below would serve the paywalled directory to everyone.
+const requireSubscription = async () => {
+  const user = await getCurrentUserProfile();
+  if (!isSubscriptionActive(user)) throw new PaywallError();
+};
 
 export const getPharmacies = async (token: string, search?: string) => {
   void token;
-  let data: ReturnType<typeof mapPharmacy>[] = [];
-  try {
-    const snap = await getDocs(collection(firestore, "pharmacies"));
-    data = snap.docs.map((item, index) =>
-      mapPharmacy(item.id, item.data(), index),
-    );
-  } catch (error) {
-    if (isPermissionDenied(error)) throw error;
-    data = [];
+  await requireSubscription();
+
+  let query = supabase.from("pharmacies").select("*");
+
+  if (search?.trim()) {
+    const term = `%${search.trim()}%`;
+    query = query.or(`name.ilike.${term},location.ilike.${term},address.ilike.${term}`);
   }
 
-  if (data.length === 0) {
-    data = fetchSeededPharmacies();
-  }
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
 
-  const query = search?.toLowerCase().trim();
+  const pharmacies = (data ?? []).map((item, index) => mapPharmacy(item, index));
 
-  if (query) {
-    data = data.filter((pharmacy) =>
-      [pharmacy.name, pharmacy.location, pharmacy.address]
-        .join(" ")
-        .toLowerCase()
-        .includes(query),
-    );
-  }
-
-  return { status: "success", count: data.length, data };
+  return { status: "success", count: pharmacies.length, data: pharmacies };
 };

@@ -13,7 +13,6 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { DocumentData, QueryDocumentSnapshot } from "firebase/firestore";
 import Sidebar from "../components/Sidebar";
 import {
   AdminPayment,
@@ -69,7 +68,7 @@ export default function AdminTransactionsScreen() {
   const [filtered, setFiltered] = useState<AdminPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [cursor, setCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [cursor, setCursor] = useState<number | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");

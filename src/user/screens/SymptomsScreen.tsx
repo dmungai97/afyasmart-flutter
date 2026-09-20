@@ -254,13 +254,19 @@ export function SymptomsScreen() {
         </View>
         <Text style={styles.stepHeaderSub2}>Type or select your symptoms</Text>
 
-        <ScrollView contentContainerStyle={styles.symptomsContent} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={styles.symptomsContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           <View style={styles.symptomSearch}>
             <Ionicons name="search-outline" size={18} color="#aaa" />
             <TextInput
               style={styles.symptomSearchInput}
               placeholder="Search symptoms..."
-              placeholderTextColor="#aaa"
+              placeholderTextColor="#9AA7A7"
+              selectionColor={TEAL}
+              cursorColor={TEAL}
               value={symptomInput}
               onChangeText={setSymptomInput}
               onSubmitEditing={addCustomSymptom}
@@ -886,12 +892,15 @@ const styles = StyleSheet.create({
   symptomsContent: { padding: 20, paddingBottom: 100 },
   symptomSearch: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#fff', borderRadius: 12,
-    paddingHorizontal: 14, height: 46,
-    borderWidth: 0.5, borderColor: '#e5e7eb',
+    backgroundColor: '#F4F8F8', borderRadius: 14,
+    paddingHorizontal: 16, minHeight: 50,
+    borderWidth: 1.5, borderColor: '#DCE3E3',
     marginBottom: 20,
   },
-  symptomSearchInput: { flex: 1, fontSize: 14, color: '#1a1a1a' },
+  symptomSearchInput: {
+    flex: 1, fontSize: 15, color: '#12201F',
+    paddingVertical: 12,
+  },
   sectionLabel:       { fontSize: 14, fontWeight: '700', color: '#1a1a1a', marginBottom: 12 },
   symptomChips:       { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
   symptomChip: {

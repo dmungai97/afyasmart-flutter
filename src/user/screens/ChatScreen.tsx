@@ -1,14 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  ScrollView, StyleSheet, KeyboardAvoidingView,
+  ScrollView, StyleSheet,
   Platform, Animated, Modal, Pressable, Keyboard,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { firebaseAuth, firestore } from '@/src/services/firebase';
 import { useAuthStore } from '@/src/store/authStore';
 import {
   sendMessage,
@@ -97,7 +96,7 @@ function SubscribeModal({
   const [selected, setSelected] = useState('weekly');
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent statusBarTranslucent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.modalOverlay} onPress={onClose}>
         <Pressable style={styles.modalSheet} onPress={() => {}}>
           <View style={styles.modalHeader}>
@@ -193,7 +192,7 @@ export function ChatScreen() {
     refreshChatStatus();
   }, [refreshChatStatus, user?.is_subscribed, user?.subscription_expires_at]);
 
-  // Loads the real conversation from Firestore once on mount. getChatHistory
+  // Loads the real conversation from the database once on mount. getChatHistory
   // existed but nothing ever called it — every reopen of this screen reset
   // to just the canned greeting, silently discarding a history that was
   // actually being saved correctly the whole time. Only replaces the
@@ -279,15 +278,11 @@ export function ChatScreen() {
         remaining:     Math.max(0, data.limit - data.chat_count),
       } : prev);
 
-      // ── Persist exchange to Firestore for chat history ──
-      // chat_count is already incremented server-side by the chatSend Cloud
-      // Function (Admin SDK) — Firestore rules block clients from writing it.
-      const uid = firebaseAuth.currentUser?.uid;
-      if (uid) {
-        const messagesRef = collection(firestore, 'users', uid, 'chatMessages');
-        await addDoc(messagesRef, { role: 'user', text: userMessage, created_at: serverTimestamp() });
-        await addDoc(messagesRef, { role: 'ai',  text: data.reply,   created_at: serverTimestamp() });
-      }
+      // The exchange is persisted server-side by the chat edge function, in
+      // the same transaction that increments chat_count. This screen used to
+      // ALSO write both messages here, so every exchange was stored twice and
+      // getChatHistory replayed each line doubled. The client now holds no
+      // insert grant on chat_messages at all, which makes that impossible.
     } catch (err) {
       if (err instanceof ChatLimitError) {
         setChatStatus((prev) => prev ? { ...prev, limit_reached: true, remaining: 0 } : prev);
@@ -326,15 +321,11 @@ export function ChatScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      // app.json sets android.softwareKeyboardLayoutMode: "resize", which
-      // already makes the OS shrink the window when the keyboard opens.
-      // Also applying KeyboardAvoidingView's padding on Android stacks two
-      // separate compensation mechanisms on top of each other — the classic
-      // cause of the input overshooting, undershooting, or landing behind
-      // the 3-button nav bar inconsistently across devices. Only Android has
-      // that automatic resize — iOS and web both still need the manual
-      // padding here.
-      behavior={Platform.OS === 'android' ? undefined : 'padding'}
+      // KeyboardAvoidingView from react-native-keyboard-controller tracks the
+      // real IME frame on every platform, including Android under the
+      // edge-to-edge window that Expo SDK 54 forces on. "padding" keeps the
+      // input row pinned just above the keyboard consistently across devices.
+      behavior="padding"
       keyboardVerticalOffset={0}
     >
       {/* Header */}
@@ -447,7 +438,9 @@ export function ChatScreen() {
           <TextInput
             style={styles.input}
             placeholder="Type your symptoms..."
-            placeholderTextColor="#aaa"
+            placeholderTextColor="#9AA7A7"
+            selectionColor={TEAL}
+            cursorColor={TEAL}
             value={input}
             onChangeText={setInput}
             multiline
@@ -456,17 +449,11 @@ export function ChatScreen() {
             onSubmitEditing={() => handleSend()}
             blurOnSubmit={false}
             onFocus={() => {
-              // Web has no real virtual keyboard — DOM focus fires here on
-              // every platform, but only iOS/Android should treat it as
-              // "the keyboard is now covering part of the screen". Doing
-              // this unconditionally dropped bottomSpacer to 0 on web,
-              // putting the input behind the fixed tab bar the moment it
-              // was clicked.
-              if (Platform.OS !== 'web') setKeyboardShown(true);
+              // Just keep the latest message in view. The keyboard frame
+              // itself is handled by KeyboardAvoidingView above — mutating
+              // layout here on focus used to race the IME open on Android
+              // and drop the keyboard.
               setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50);
-            }}
-            onBlur={() => {
-              if (Platform.OS !== 'web') setKeyboardShown(false);
             }}
           />
           <TouchableOpacity
@@ -568,17 +555,26 @@ const styles = StyleSheet.create({
   },
   typingDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: TEAL },
   inputRow: {
-    flexDirection: 'row', padding: 12, gap: 10,
-    backgroundColor: '#fff', borderTopWidth: 0.5, borderTopColor: '#e8e8e8',
+    flexDirection: 'row', paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10,
+    gap: 10, backgroundColor: '#fff',
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#e2eaea',
     alignItems: 'flex-end',
   },
   input: {
-    flex: 1, backgroundColor: '#f4f8f8', borderWidth: 0.5, borderColor: '#ddd',
-    borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10,
-    fontSize: 14, color: '#1a1a1a', maxHeight: 100,
+    flex: 1, minHeight: 46, backgroundColor: '#F1F6F6',
+    borderWidth: 1.5, borderColor: '#DCE3E3',
+    borderRadius: 23, paddingHorizontal: 18,
+    paddingTop: Platform.OS === 'ios' ? 12 : 8,
+    paddingBottom: Platform.OS === 'ios' ? 12 : 8,
+    fontSize: 15, color: '#12201F', maxHeight: 120,
   },
-  sendBtn:      { backgroundColor: TEAL, width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  sendDisabled: { opacity: 0.4 },
+  sendBtn: {
+    backgroundColor: TEAL, width: 46, height: 46, borderRadius: 23,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: TEAL, shadowOpacity: 0.3, shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 }, elevation: 3,
+  },
+  sendDisabled: { backgroundColor: '#9DBFBF', shadowOpacity: 0, elevation: 0 },
   lockedBar: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: '#fff', padding: 16,

@@ -48,3 +48,12 @@ app-example
 
 .vscode
 .idea
+
+# Flutter
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.pub-cache/
+.pub/

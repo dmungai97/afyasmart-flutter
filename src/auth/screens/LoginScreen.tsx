@@ -5,11 +5,11 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Constants from 'expo-constants';
@@ -31,6 +31,7 @@ type GoogleExtra = {
 };
 
 export function LoginScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { plan } = useLocalSearchParams<{ plan?: string }>();
 
@@ -44,7 +45,7 @@ export function LoginScreen() {
   const [focusedField, setFocusedField] = useState<string | null>(null);
 
   const isSubmitting = useRef(false);
-  const googleExtra = (Constants.expoConfig?.extra?.firebase ?? {}) as GoogleExtra;
+  const googleExtra = (Constants.expoConfig?.extra?.google ?? {}) as GoogleExtra;
   const googleWebClientId =
     process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ??
     googleExtra.googleWebClientId;
@@ -160,6 +161,7 @@ export function LoginScreen() {
       <StatusBar
         barStyle="light-content"
         backgroundColor={TEAL_DARK}
+        translucent
       />
 
       {/* Decorative Background */}
@@ -228,12 +230,12 @@ export function LoginScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, { paddingBottom: Math.max(insets.bottom, 24) }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
         {/* Top Brand Section */}
-        <View style={styles.top}>
+        <View style={[styles.top, { paddingTop: Math.max(insets.top, 36) + 32 }]}>
           <View style={styles.logoWrap}>
             <View style={styles.logoRing2}>
               <View style={styles.logoRing1}>
@@ -287,7 +289,9 @@ export function LoginScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="your@email.com"
-                placeholderTextColor="#bbb"
+                placeholderTextColor="#9AA7A7"
+                selectionColor={TEAL}
+                cursorColor={TEAL}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -330,7 +334,9 @@ export function LoginScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="Enter your password"
-                placeholderTextColor="#bbb"
+                placeholderTextColor="#9AA7A7"
+                selectionColor={TEAL}
+                cursorColor={TEAL}
                 secureTextEntry={!showPassword}
                 autoCorrect={false}
                 value={password}
@@ -657,16 +663,20 @@ const styles = StyleSheet.create({
   inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f7faf9',
+    backgroundColor: '#F4F8F7',
     borderWidth: 1.5,
-    borderColor: '#E5E7EB',
+    borderColor: '#E3E9E9',
     borderRadius: 16,
     paddingLeft: 4,
     paddingRight: 14,
-    height: 54,
+    minHeight: 56,
     gap: 2,
   },
   inputWrapFocused: {
+    // Only colour changes here — no borderWidth/elevation/shadow. Those
+    // relayout or re-composite the focused field's container on Android,
+    // and doing that at the exact moment the IME is opening makes the
+    // keyboard flash up and immediately close again.
     borderColor: TEAL,
     backgroundColor: '#fff',
   },
@@ -681,11 +691,12 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    fontSize: 14,
-    color: '#1a1a1a',
+    fontSize: 15,
+    color: '#12201F',
+    paddingVertical: 12,
   },
   eyeBtn: {
-    padding: 4,
+    padding: 6,
   },
   forgotRow: {
     alignSelf: 'flex-end',
