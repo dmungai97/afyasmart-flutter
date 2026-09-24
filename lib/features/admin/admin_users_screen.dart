@@ -95,16 +95,22 @@ class _AdminUsersScreenState extends ConsumerState<AdminUsersScreen> {
           child: TextField(
             controller: _search,
             onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
-              hintText: 'Filter loaded users by name, email or phone',
-              prefixIcon: Icon(Icons.search, size: 20),
+            decoration: InputDecoration(
+              hintText: 'Search users by name, email, or phone...',
+              prefixIcon: const Icon(Icons.search, size: 20),
+              suffixIcon: _search.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 18),
+                      onPressed: () => setState(() => _search.clear()),
+                    )
+                  : null,
               isDense: true,
             ),
           ),
         ),
         Expanded(
           child: rows.isEmpty
-              ? const AdminEmpty(message: 'No users match that filter.')
+              ? const AdminEmpty(message: 'No users match that search.')
               : ListView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                   itemCount: rows.length + (_hasMore ? 1 : 0),
@@ -138,6 +144,19 @@ class _AdminUsersScreenState extends ConsumerState<AdminUsersScreen> {
         children: [
           Row(
             children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: AppColors.ink.withValues(alpha: 0.08),
+                child: Text(
+                  u.name.isNotEmpty ? u.name[0].toUpperCase() : 'U',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.ink,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -185,7 +204,9 @@ class _AdminUsersScreenState extends ConsumerState<AdminUsersScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
+          const Divider(height: 1, color: AppColors.rule),
+          const SizedBox(height: 6),
           Row(
             children: [
               Expanded(
@@ -202,6 +223,14 @@ class _AdminUsersScreenState extends ConsumerState<AdminUsersScreen> {
               ),
               TextButton(
                 onPressed: () => _edit(u),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  textStyle: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 child: const Text('Edit'),
               ),
             ],
@@ -213,99 +242,29 @@ class _AdminUsersScreenState extends ConsumerState<AdminUsersScreen> {
 
   Future<void> _edit(AdminUserRow user) async {
     final viewer = ref.read(currentUserProvider);
-    // Only a super_admin may change a role; admin_update_user enforces this
-    // too, but hiding the control avoids offering an action that will fail.
     final canChangeRole = viewer?.role == UserRole.superAdmin;
 
-    final nameController = TextEditingController(text: user.name);
-    var role = user.role;
-    var subscribed = user.subscribed;
-    var plan = user.plan;
-
-    final saved = await showDialog<bool>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (_, setDialogState) => AlertDialog(
-          title: Text(user.name),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(labelText: 'Name'),
-                ),
-                const SizedBox(height: 14),
-                if (canChangeRole)
-                  DropdownButtonFormField<String>(
-                    initialValue: role,
-                    decoration: const InputDecoration(labelText: 'Role'),
-                    items: const [
-                      DropdownMenuItem(value: 'user', child: Text('User')),
-                      DropdownMenuItem(value: 'admin', child: Text('Admin')),
-                      DropdownMenuItem(
-                        value: 'super_admin',
-                        child: Text('Super admin'),
-                      ),
-                    ],
-                    onChanged: (v) => setDialogState(() => role = v ?? role),
-                  )
-                else
-                  Text(
-                    'Role: ${user.role} — only a super admin can change this.',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.inkMuted,
-                    ),
-                  ),
-                const SizedBox(height: 14),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: subscribed,
-                  title: const Text('Subscribed'),
-                  onChanged: (v) => setDialogState(() => subscribed = v),
-                ),
-                DropdownButtonFormField<String>(
-                  initialValue: plan,
-                  decoration: const InputDecoration(labelText: 'Plan'),
-                  items: const [
-                    DropdownMenuItem(value: 'free', child: Text('Free')),
-                    DropdownMenuItem(value: 'daily', child: Text('Daily')),
-                    DropdownMenuItem(value: 'weekly', child: Text('Weekly')),
-                    DropdownMenuItem(value: 'monthly', child: Text('Monthly')),
-                  ],
-                  onChanged: (v) => setDialogState(() => plan = v ?? plan),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Save'),
-            ),
-          ],
-        ),
+      builder: (dialogContext) => _UserEditDialog(
+        user: user,
+        canChangeRole: canChangeRole,
       ),
     );
 
-    // Read before disposing — the update below used the controller after it
-    // had been torn down.
-    final newName = nameController.text.trim();
-    nameController.dispose();
-    if (saved != true) return;
+    if (result == null) return;
+
+    final newName = result['name'] as String?;
+    final role = result['role'] as String?;
+    final subscribed = result['subscribed'] as bool?;
+    final plan = result['plan'] as String?;
 
     try {
       await ref
           .read(adminServiceProvider)
           .updateUser(
             userId: user.id,
-            name: newName.isEmpty ? null : newName,
+            name: newName == null || newName.isEmpty ? null : newName,
             role: canChangeRole && role != user.role ? role : null,
             isSubscribed: subscribed == user.subscribed ? null : subscribed,
             plan: plan == user.plan ? null : plan,
@@ -319,5 +278,144 @@ class _AdminUsersScreenState extends ConsumerState<AdminUsersScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     }
+  }
+}
+
+class _UserEditDialog extends StatefulWidget {
+  const _UserEditDialog({required this.user, required this.canChangeRole});
+
+  final AdminUserRow user;
+  final bool canChangeRole;
+
+  @override
+  State<_UserEditDialog> createState() => _UserEditDialogState();
+}
+
+class _UserEditDialogState extends State<_UserEditDialog> {
+  late final TextEditingController _nameController;
+  late String _role;
+  late bool _subscribed;
+  late String _plan;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.user.name);
+    _role = widget.user.role;
+    _subscribed = widget.user.subscribed;
+    _plan = widget.user.plan;
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+      ),
+      title: Text(
+        widget.user.name,
+        style: const TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.w700,
+          color: AppColors.ink,
+        ),
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: 'Name',
+                prefixIcon: Icon(Icons.person_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (widget.canChangeRole)
+              DropdownButtonFormField<String>(
+                value: _role,
+                decoration: const InputDecoration(
+                  labelText: 'Role',
+                  prefixIcon: Icon(Icons.security, size: 18),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'user', child: Text('User')),
+                  DropdownMenuItem(value: 'admin', child: Text('Admin')),
+                  DropdownMenuItem(
+                    value: 'super_admin',
+                    child: Text('Super admin'),
+                  ),
+                ],
+                onChanged: (v) => setState(() => _role = v ?? _role),
+              )
+            else
+              Text(
+                'Role: ${widget.user.role} — only a super admin can change this.',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.inkMuted,
+                ),
+              ),
+            const SizedBox(height: 14),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _subscribed,
+              activeThumbColor: AppColors.ink,
+              title: const Text(
+                'Subscribed',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+              onChanged: (v) => setState(() => _subscribed = v),
+            ),
+            DropdownButtonFormField<String>(
+              value: _plan,
+              decoration: const InputDecoration(
+                labelText: 'Plan',
+                prefixIcon: Icon(Icons.card_membership, size: 18),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'free', child: Text('Free')),
+                DropdownMenuItem(value: 'daily', child: Text('Daily')),
+                DropdownMenuItem(value: 'weekly', child: Text('Weekly')),
+                DropdownMenuItem(value: 'monthly', child: Text('Monthly')),
+              ],
+              onChanged: (v) => setState(() => _plan = v ?? _plan),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            Navigator.pop(context, {
+              'name': _nameController.text.trim(),
+              'role': _role,
+              'subscribed': _subscribed,
+              'plan': _plan,
+            });
+          },
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.ink,
+            foregroundColor: AppColors.paper,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          child: const Text('Save'),
+        ),
+      ],
+    );
   }
 }

@@ -296,6 +296,12 @@ class DiagnosisController extends Notifier<DiagnosisState> {
     );
     await _persist();
   }
+
+  Future<void> clearAll() async {
+    state = const DiagnosisState(hydrated: true);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_key);
+  }
 }
 
 final diagnosisControllerProvider =

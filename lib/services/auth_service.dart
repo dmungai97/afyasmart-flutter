@@ -28,8 +28,35 @@ class AuthService {
         .eq('id', authUser.id)
         .maybeSingle();
 
-    if (row == null) return null;
-    return AppUser.fromRow(row);
+    if (row != null) {
+      return AppUser.fromRow(row);
+    }
+
+    // Auto-create missing profile row for users created before DB trigger was active
+    final meta = authUser.userMetadata ?? {};
+    final name = meta['name'] as String? ?? authUser.email?.split('@').first ?? 'User';
+    final phone = meta['phone'] as String? ?? '';
+
+    try {
+      final inserted = await supabase
+          .from('users')
+          .upsert({
+            'id': authUser.id,
+            'name': name,
+            'email': authUser.email ?? '',
+            'phone': phone,
+          })
+          .select(_userColumns)
+          .maybeSingle();
+
+      if (inserted != null) {
+        return AppUser.fromRow(inserted);
+      }
+    } catch (_) {
+      // Fall through if RLS restricts direct client upsert
+    }
+
+    return null;
   }
 
   Future<void> markOnboardingCompleted() async {

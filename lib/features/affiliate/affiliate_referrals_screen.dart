@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme.dart';
+import '../../services/affiliate_service.dart';
 import '../../state/affiliate_controller.dart';
 import 'widgets/affiliate_widgets.dart';
 
@@ -22,7 +23,8 @@ class _AffiliateReferralsScreenState
 
   @override
   Widget build(BuildContext context) {
-    final data = ref.watch(affiliateControllerProvider).requireValue;
+    final data = ref.watch(affiliateControllerProvider).value ??
+        const AffiliateSummary.empty();
 
     final referrals = switch (_filter) {
       _Filter.all => data.referrals,

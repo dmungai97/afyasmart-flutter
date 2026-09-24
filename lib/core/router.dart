@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'theme.dart';
+
 import '../features/admin/admin_dashboard_screen.dart';
 import '../features/admin/admin_facilities_screen.dart';
 import '../features/admin/admin_payouts_screen.dart';
@@ -43,6 +45,7 @@ import '../state/auth_controller.dart';
 /// the effect-based version could produce before its replace() landed.
 
 abstract final class Routes {
+  static const splash = '/splash';
   static const welcome = '/welcome';
   static const healthCheck = '/health-check';
   static const symptomChat = '/symptom-chat';
@@ -112,16 +115,15 @@ abstract final class Routes {
 }
 
 final routerProvider = Provider<GoRouter>((ref) {
-  final auth = ref.watch(authControllerProvider);
-
   return GoRouter(
-    initialLocation: Routes.welcome,
+    initialLocation: Routes.splash,
     // Re-runs redirect whenever auth state changes, which is what makes
     // "sign out anywhere and land on welcome" work without each screen
     // handling it.
     refreshListenable: _AuthListenable(ref),
     redirect: (context, goState) {
-      if (auth.loading) return null;
+      final auth = ref.read(authControllerProvider);
+      if (auth.loading) return Routes.splash;
 
       final location = goState.matchedLocation;
       final user = auth.user;
@@ -133,43 +135,56 @@ final routerProvider = Provider<GoRouter>((ref) {
       final inAdmin = location.startsWith(Routes.admin);
       final inAffiliate = location.startsWith(Routes.affiliate);
 
-      if (inAffiliate) return signedIn ? null : Routes.login;
-
-      if (!signedIn) {
-        if (inAdmin || inTabs) return Routes.login;
-        if (inAuth || inOnboarding) return null;
-        return Routes.welcome;
+      String? result;
+      if (location == Routes.splash) {
+        if (signedIn) {
+          result = user.isAdmin ? Routes.admin : Routes.home;
+        } else if (auth.hasCompletedOnboarding) {
+          result = Routes.login;
+        } else {
+          result = Routes.welcome;
+        }
+      } else if (inAffiliate) {
+        result = signedIn ? null : Routes.login;
+      } else if (!signedIn) {
+        if (inAdmin || inTabs) {
+          result = Routes.login;
+        } else if (inAuth || inOnboarding) {
+          result = null;
+        } else if (auth.hasCompletedOnboarding) {
+          result = Routes.login;
+        } else {
+          result = Routes.welcome;
+        }
+      } else if (inAdmin) {
+        result = user.isAdmin ? null : Routes.home;
+      } else if (user.isAdmin && (inAuth || inOnboarding)) {
+        result = Routes.admin;
+      } else if (user.isSubscribed) {
+        result = inTabs ? null : Routes.home;
+      } else if (location == Routes.subscription) {
+        result = null;
+      } else if (Routes.premium.contains(location)) {
+        result = Routes.subscription;
+      } else if (auth.isNewUser && !auth.hasCompletedOnboarding && !user.onboardingCompleted) {
+        result = inOnboarding ? null : Routes.welcome;
+      } else if (inOnboarding || inAuth) {
+        final plan = goState.uri.queryParameters['plan'];
+        if (plan != null && plan.isNotEmpty && !user.isSubscribed) {
+          result = '${Routes.subscription}?plan=$plan';
+        } else {
+          result = Routes.home;
+        }
       }
 
-      if (inAdmin) return user.isAdmin ? null : Routes.home;
-
-      // Admins land in the console rather than the patient app.
-      if (user.isAdmin && (inAuth || inTabs || inOnboarding)) {
-        return Routes.admin;
-      }
-
-      if (user.isSubscribed) return inTabs ? null : Routes.home;
-
-      // A non-subscriber may always reach the paywall itself.
-      if (location == Routes.subscription) return null;
-
-      if (Routes.premium.contains(location)) return Routes.subscription;
-
-      // Only a brand-new registration is pushed through the survey; an
-      // existing user who never finished it is not bounced on every launch.
-      final needsOnboarding =
-          auth.isNewUser &&
-          !auth.hasCompletedOnboarding &&
-          !user.onboardingCompleted;
-
-      if (needsOnboarding) return inOnboarding ? null : Routes.welcome;
-
-      // Existing users should not be forced through the new-user flow.
-      if (inOnboarding || inAuth) return Routes.home;
-
-      return null;
+      debugPrint('[Router] location: $location, signedIn: $signedIn, -> redirect: $result');
+      return result;
     },
     routes: [
+      GoRoute(
+        path: Routes.splash,
+        builder: (_, _) => const _SplashOverlay(),
+      ),
       // ?plan= and ?ref= come from deep links and are carried between the
       // two auth screens, matching useLocalSearchParams() in the RN
       // originals: `ref` attributes the referral at sign-up, `plan` sends the
@@ -299,6 +314,54 @@ final routerProvider = Provider<GoRouter>((ref) {
 /// Bridges Riverpod state changes into go_router's Listenable-based refresh.
 class _AuthListenable extends ChangeNotifier {
   _AuthListenable(Ref ref) {
-    ref.listen(authControllerProvider, (_, _) => notifyListeners());
+    ref.listen<AuthState>(authControllerProvider, (prev, next) {
+      if (prev?.user != next.user || prev?.loading != next.loading) {
+        notifyListeners();
+      }
+    });
+  }
+}
+
+class _SplashOverlay extends StatelessWidget {
+  const _SplashOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: AppColors.paper,
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 120,
+              height: 2,
+              child: LinearProgressIndicator(
+                backgroundColor: AppColors.rule,
+                valueColor: AlwaysStoppedAnimation<Color>(AppColors.accent),
+              ),
+            ),
+            SizedBox(height: 24),
+            Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: 'Afya'),
+                  TextSpan(
+                    text: 'Smart',
+                    style: TextStyle(color: AppColors.accent),
+                  ),
+                ],
+              ),
+              style: TextStyle(
+                color: AppColors.ink,
+                fontSize: 32,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

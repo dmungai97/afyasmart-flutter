@@ -65,14 +65,25 @@ class AffiliateShell extends ConsumerWidget {
       ),
       data: (data) {
         if (!data.enrolled) return const AffiliateEnrollScreen();
-        return Scaffold(
-          backgroundColor: const Color(0xFFF5F7FA),
-          body: child,
-          bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
-              ? null
-              : _AffiliateBar(
-                  location: GoRouterState.of(context).matchedLocation,
-                ),
+        final location = GoRouterState.of(context).matchedLocation;
+
+        return PopScope(
+          canPop: location == Routes.affiliate,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) return;
+            if (location != Routes.affiliate) {
+              context.go(Routes.affiliate);
+            }
+          },
+          child: Scaffold(
+            backgroundColor: const Color(0xFFF5F7FA),
+            body: child,
+            bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
+                ? null
+                : _AffiliateBar(
+                    location: location,
+                  ),
+          ),
         );
       },
     );

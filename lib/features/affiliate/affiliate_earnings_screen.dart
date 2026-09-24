@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme.dart';
+import '../../services/affiliate_service.dart';
 import '../../state/affiliate_controller.dart';
 import 'widgets/affiliate_widgets.dart';
 
@@ -11,7 +12,8 @@ class AffiliateEarningsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final data = ref.watch(affiliateControllerProvider).requireValue;
+    final data = ref.watch(affiliateControllerProvider).value ??
+        const AffiliateSummary.empty();
 
     return Column(
       children: [

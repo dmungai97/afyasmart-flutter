@@ -269,11 +269,12 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
 
     await Future<void>.delayed(const Duration(milliseconds: 700));
     if (!mounted) return;
-    context.push(Routes.analysisLoading);
+    context.go(Routes.analysisLoading);
   }
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('[SymptomChatScreen] build - stage: $_stage');
     return Scaffold(
       backgroundColor: AppColors.paper,
       // resizeToAvoidBottomInset keeps the composer above the IME. The RN

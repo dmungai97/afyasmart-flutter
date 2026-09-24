@@ -64,12 +64,21 @@ class TabShell extends ConsumerWidget {
 
     final location = GoRouterState.of(context).matchedLocation;
 
-    return Scaffold(
-      body: child,
-      // The bar hides itself with the keyboard, matching tabBarHideOnKeyboard.
-      bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
-          ? null
-          : _Bar(items: items, location: location),
+    return PopScope(
+      canPop: location == Routes.home,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (location != Routes.home) {
+          context.go(Routes.home);
+        }
+      },
+      child: Scaffold(
+        body: child,
+        // The bar hides itself with the keyboard, matching tabBarHideOnKeyboard.
+        bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
+            ? null
+            : _Bar(items: items, location: location),
+      ),
     );
   }
 }

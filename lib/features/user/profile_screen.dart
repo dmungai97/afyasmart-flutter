@@ -169,6 +169,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
         ],
       ),
+      if (user?.isAdmin == true)
+        (
+          'Admin',
+          [
+            (
+              icon: Icons.admin_panel_settings_outlined,
+              label: 'Admin Console',
+              sub: 'Manage users, facilities, transactions, payouts',
+              onTap: () => context.go(Routes.admin),
+            ),
+          ],
+        ),
     ];
 
     return Container(

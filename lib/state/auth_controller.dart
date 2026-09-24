@@ -83,7 +83,20 @@ class AuthController extends Notifier<AuthState> {
     }
 
     try {
-      final user = await ref.read(authServiceProvider).currentProfile();
+      var user = await ref.read(authServiceProvider).currentProfile();
+
+      // Automatically reconcile recent pending payment if user is not yet marked as subscribed
+      if (user != null && !user.isSubscribed) {
+        try {
+          final mpesaStatus = await ref.read(mpesaServiceProvider).checkLatest();
+          if (mpesaStatus != null && mpesaStatus.paid) {
+            user = await ref.read(authServiceProvider).currentProfile() ?? user;
+          }
+        } catch (_) {
+          // Silent catch on cold start auto-reconcile
+        }
+      }
+
       state = AuthState(
         user: user,
         hasCompletedOnboarding: onboarded || (user?.onboardingCompleted ?? false),

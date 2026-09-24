@@ -49,76 +49,164 @@ class AdminShell extends ConsumerWidget {
         .map((i) => i.label)
         .firstOrNull;
 
-    return Scaffold(
-      backgroundColor: AppColors.paper,
-      appBar: AppBar(
-        title: Text(title ?? 'Admin'),
-        actions: [
-          IconButton(
-            tooltip: 'Back to app',
-            onPressed: () => context.go(Routes.home),
-            icon: const Icon(Icons.exit_to_app),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (location != Routes.admin) {
+          context.go(Routes.admin);
+        } else {
+          context.go(Routes.home);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.paper,
+        appBar: AppBar(
+          title: Text(
+            title ?? 'Admin',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-          IconButton(
-            tooltip: 'Sign out',
-            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
-            icon: const Icon(Icons.logout),
-          ),
-        ],
+          actions: [
+            IconButton(
+              tooltip: 'Back to app',
+              onPressed: () => context.go(Routes.home),
+              icon: const Icon(Icons.exit_to_app),
+            ),
+            IconButton(
+              tooltip: 'Sign out',
+              onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+              icon: const Icon(Icons.logout),
+            ),
+          ],
+        ),
+        drawer: wide
+            ? null
+            : Drawer(
+                child: _nav(context, location, isDrawer: true),
+              ),
+        body: wide
+            ? Row(
+                children: [
+                  SizedBox(
+                    width: 240,
+                    child: _nav(context, location, isDrawer: false),
+                  ),
+                  const VerticalDivider(width: 1),
+                  Expanded(child: child),
+                ],
+              )
+            : child,
       ),
-      drawer: wide ? null : Drawer(child: _nav(context, location)),
-      body: wide
-          ? Row(
-              children: [
-                SizedBox(width: 240, child: _nav(context, location)),
-                const VerticalDivider(width: 1),
-                Expanded(child: child),
-              ],
-            )
-          : child,
     );
   }
 
-  Widget _nav(BuildContext context, String location) => Container(
+  Widget _nav(
+    BuildContext context,
+    String location, {
+    required bool isDrawer,
+  }) => Container(
     color: AppColors.surface,
     child: SafeArea(
       child: ListView(
         padding: const EdgeInsets.symmetric(vertical: 12),
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(20, 8, 20, 16),
-            child: Text(
-              'AfyaSmart Admin',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: AppColors.ink,
-              ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: AppColors.ink,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.admin_panel_settings_outlined,
+                    size: 18,
+                    color: AppColors.paper,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(text: 'Afya'),
+                        TextSpan(
+                          text: 'Smart',
+                          style: TextStyle(color: AppColors.accent),
+                        ),
+                        TextSpan(
+                          text: ' Admin',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.inkMuted,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.ink,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ),
           ),
-          for (final item in _items)
-            ListTile(
-              selected: location == item.route,
-              selectedTileColor: AppColors.tintSuccessBg,
-              selectedColor: AppColors.ink,
-              leading: Icon(item.icon, size: 20),
-              title: Text(
-                item.label,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              onTap: () {
-                // Close the drawer first on narrow screens, or it lingers
-                // over the newly pushed route.
-                if (Scaffold.of(context).hasDrawer &&
-                    Scaffold.of(context).isDrawerOpen) {
-                  Navigator.pop(context);
-                }
-                context.go(item.route);
+          const Divider(height: 1, color: AppColors.rule),
+          const SizedBox(height: 8),
+          for (final item in _items) ...[
+            Builder(
+              builder: (_) {
+                final focused = location == item.route;
+                return Container(
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: focused
+                        ? AppColors.ink.withValues(alpha: 0.08)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: ListTile(
+                    dense: true,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    leading: Icon(
+                      item.icon,
+                      size: 20,
+                      color: focused ? AppColors.ink : AppColors.inkMuted,
+                    ),
+                    title: Text(
+                      item.label,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight:
+                            focused ? FontWeight.w700 : FontWeight.w500,
+                        color: focused ? AppColors.ink : AppColors.inkMuted,
+                      ),
+                    ),
+                    onTap: () {
+                      if (isDrawer) {
+                        Navigator.of(context).pop();
+                      }
+                      context.go(item.route);
+                    },
+                  ),
+                );
               },
             ),
+          ],
         ],
       ),
     ),

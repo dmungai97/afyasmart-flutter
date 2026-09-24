@@ -5,18 +5,21 @@ import '../../../core/theme.dart';
 
 /// Shared chrome for the affiliate tabs.
 
-final _currency = NumberFormat.currency(
-  locale: 'en_KE',
-  symbol: 'Ksh ',
-  decimalDigits: 0,
-);
+String formatKes(num value) => 'Ksh ${value.toStringAsFixed(0)}';
 
-String formatKes(num value) => _currency.format(value);
-
-final _dateFormat = DateFormat('dd MMM yyyy, HH:mm', 'en');
-
-String formatMoment(DateTime? value) =>
-    value == null ? 'Recent' : _dateFormat.format(value);
+String formatMoment(DateTime? value) {
+  if (value == null) return 'Recent';
+  final date = value.toLocal();
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final day = date.day.toString().padLeft(2, '0');
+  final month = months[(date.month - 1).clamp(0, 11)];
+  final hour = date.hour.toString().padLeft(2, '0');
+  final minute = date.minute.toString().padLeft(2, '0');
+  return '$day $month ${date.year}, $hour:$minute';
+}
 
 class AffiliateHeader extends StatelessWidget {
   const AffiliateHeader({required this.title, this.subtitle, super.key});

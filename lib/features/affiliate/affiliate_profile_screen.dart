@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/router.dart';
 import '../../core/theme.dart';
+import '../../services/affiliate_service.dart';
 import '../../state/affiliate_controller.dart';
 import '../../state/auth_controller.dart';
 import 'widgets/affiliate_widgets.dart';
@@ -15,7 +16,8 @@ class AffiliateProfileScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final data = ref.watch(affiliateControllerProvider).requireValue;
+    final data = ref.watch(affiliateControllerProvider).value ??
+        const AffiliateSummary.empty();
     final user = ref.watch(currentUserProvider);
 
     return Column(

@@ -2,10 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/router.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
+import '../../main.dart';
 import '../../state/auth_controller.dart';
 import '../../state/providers.dart';
 
@@ -96,6 +99,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
   _Plan? _selected;
   _PayStep _step = _PayStep.form;
   String? _checkoutId;
+  String? _failureReason;
   int _pollCount = 0;
 
   Timer? _poll;
@@ -147,22 +151,26 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
       _selected = plan;
       _step = _PayStep.form;
       _checkoutId = null;
+      _failureReason = null;
       _pollCount = 0;
       _phone.text = ref.read(currentUserProvider)?.phone ?? '';
     });
     _showPaymentSheet();
   }
 
-  Future<void> _initiate(void Function(void Function()) setSheetState) async {
+    Future<void> _initiate(void Function(void Function()) setSheetState) async {
     final plan = _selected;
     if (plan == null || _phone.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      scaffoldMessengerKey.currentState?.showSnackBar(
         const SnackBar(content: Text('Enter your M-Pesa phone number.')),
       );
       return;
     }
 
-    setSheetState(() => _step = _PayStep.waiting);
+    setSheetState(() {
+      _step = _PayStep.waiting;
+      _failureReason = null;
+    });
 
     try {
       final checkoutId = await ref
@@ -172,9 +180,9 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
       _checkoutId = checkoutId;
       _startWatching(checkoutId, setSheetState);
     } on Exception catch (e) {
+      _failureReason = e.toString().replaceAll('ApiException: ', '');
       setSheetState(() => _step = _PayStep.failed);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      scaffoldMessengerKey.currentState?.showSnackBar(
         SnackBar(content: Text('STK Push failed: $e')),
       );
     }
@@ -187,6 +195,11 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
   /// otherwise show success on a screen that still has no access.
   Future<bool> _confirmAccess(String checkoutId) async {
     final status = await ref.read(mpesaServiceProvider).poll(checkoutId);
+    if (status.status == 'failed' || status.status == 'cancelled') {
+      if (status.message != null && status.message!.isNotEmpty) {
+        _failureReason = status.message;
+      }
+    }
     if (!status.paid) return false;
 
     await ref.read(authControllerProvider.notifier).refresh();
@@ -205,6 +218,9 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
         if (await _confirmAccess(checkoutId)) {
           _stopWatchers();
           if (mounted) setSheetState(() => _step = _PayStep.confirmed);
+        } else if (_failureReason != null) {
+          _stopWatchers();
+          if (mounted) setSheetState(() => _step = _PayStep.failed);
         }
       } on Exception {
         // A failed poll is expected while the user is still entering their
@@ -229,6 +245,10 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
           callback: (payload) async {
             final row = payload.newRecord;
             final status = row['status'] as String?;
+            final reason = row['failure_reason'] as String?;
+            if (reason != null && reason.isNotEmpty) {
+              _failureReason = reason;
+            }
 
             if (row['paid'] == true || status == 'paid') {
               await check();
@@ -249,6 +269,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
 
     _timeout = Timer(_giveUpAfter, () {
       _stopWatchers();
+      _failureReason ??= "Transaction timed out waiting for M-Pesa PIN confirmation. Tap Check again if you completed payment.";
       if (mounted) setSheetState(() => _step = _PayStep.failed);
     });
   }
@@ -420,7 +441,10 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
       ),
       const SizedBox(height: 20),
       FilledButton(
-        onPressed: () => Navigator.pop(sheetContext),
+        onPressed: () {
+          Navigator.pop(sheetContext);
+          context.go(Routes.home);
+        },
         style: FilledButton.styleFrom(
           backgroundColor: AppColors.brand,
           foregroundColor: Colors.white,
@@ -452,11 +476,13 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
         ),
       ),
       const SizedBox(height: 6),
-      const Text(
-        "We didn't receive confirmation. If you were charged, tap Check "
-        'again — your subscription will activate automatically.',
+      Text(
+        _failureReason != null && _failureReason!.isNotEmpty
+            ? _failureReason!
+            : "We didn't receive confirmation. If you were charged, tap Check "
+              'again — your subscription will activate automatically.',
         textAlign: TextAlign.center,
-        style: TextStyle(
+        style: const TextStyle(
           fontSize: 13,
           color: AppPalette.textMuted,
           height: 1.5,
@@ -505,49 +531,71 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
     final user = ref.watch(currentUserProvider);
     final activePlan = user?.isSubscribed == true ? user!.effectivePlan : 'free';
 
-    return Container(
-      color: const Color(0xFFF5F7FA),
-      child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          Container(
-            width: double.infinity,
-            color: AppColors.brand,
-            padding: EdgeInsets.fromLTRB(
-              24,
-              MediaQuery.viewPaddingOf(context).top + 20,
-              24,
-              24,
-            ),
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Choose your plan',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
+    return PopScope(
+      canPop: context.canPop(),
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (context.mounted) {
+          context.go(Routes.home);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF5F7FA),
+        body: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            Container(
+              width: double.infinity,
+              color: AppColors.brand,
+              padding: EdgeInsets.fromLTRB(
+                16,
+                MediaQuery.viewPaddingOf(context).top + 12,
+                24,
+                24,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  IconButton(
+                    onPressed: () {
+                      if (context.canPop()) {
+                        context.pop();
+                      } else {
+                        context.go(Routes.home);
+                      }
+                    },
+                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
                   ),
-                ),
-                SizedBox(height: 4),
-                Text(
-                  'Pay with M-Pesa. Cancel any time.',
-                  style: TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-              ],
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Choose your plan',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Pay with M-Pesa. Cancel any time.',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                ],
+              ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-            child: Column(
-              children: [
-                for (final plan in _plans)
-                  _planCard(plan, isCurrent: plan.id == activePlan),
-              ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              child: Column(
+                children: [
+                  for (final plan in _plans)
+                    _planCard(plan, isCurrent: plan.id == activePlan),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

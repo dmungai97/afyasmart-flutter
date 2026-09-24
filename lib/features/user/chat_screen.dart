@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/router.dart';
+import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../models/app_user.dart';
 import '../../services/chat_service.dart';
@@ -135,6 +136,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if (!mounted) return;
       await ref.read(authControllerProvider.notifier).refresh();
       if (mounted) _showLimitSheet();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _messages = [
+          ..._messages,
+          ChatMessage(
+            role: 'ai',
+            text: e.message.isNotEmpty
+                ? e.message
+                : 'Sorry, I could not process your request. Please try again.',
+            time: _now(),
+          ),
+        ];
+      });
     } on Exception {
       if (!mounted) return;
       setState(() {

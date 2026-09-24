@@ -2,18 +2,20 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/router.dart';
 import '../../core/theme.dart';
+import '../../state/diagnosis_controller.dart';
 import 'widgets/vitals_rule.dart';
 
 /// Port of src/onboarding/screens/WelcomeScreen.tsx.
-class WelcomeScreen extends StatefulWidget {
+class WelcomeScreen extends ConsumerStatefulWidget {
   const WelcomeScreen({super.key});
 
   @override
-  State<WelcomeScreen> createState() => _WelcomeScreenState();
+  ConsumerState<WelcomeScreen> createState() => _WelcomeScreenState();
 }
 
 /// A few recognizable, real institutions to name-drop instead of a generic
@@ -55,7 +57,7 @@ class _Counts {
   final List<String> hospitals;
 }
 
-class _WelcomeScreenState extends State<WelcomeScreen>
+class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
     with TickerProviderStateMixin {
   late final AnimationController _intro = AnimationController(
     vsync: this,
@@ -331,7 +333,13 @@ class _WelcomeScreenState extends State<WelcomeScreen>
       SizedBox(
         width: double.infinity,
         child: FilledButton(
-          onPressed: () => context.push(Routes.healthCheck),
+          onPressed: () async {
+            debugPrint('[WelcomeScreen] "Start your check-in" button pressed!');
+            await ref.read(diagnosisControllerProvider.notifier).clearAll();
+            if (!context.mounted) return;
+            debugPrint('[WelcomeScreen] Navigating to ${Routes.healthCheck}');
+            context.go(Routes.healthCheck);
+          },
           style: FilledButton.styleFrom(
             backgroundColor: AppColors.ink,
             foregroundColor: AppColors.paper,
@@ -352,6 +360,18 @@ class _WelcomeScreenState extends State<WelcomeScreen>
         ),
       ),
       const SizedBox(height: 10),
+      TextButton(
+        onPressed: () => context.go(Routes.login),
+        child: const Text(
+          'Already have an account? Sign In',
+          style: TextStyle(
+            color: AppColors.ink,
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+          ),
+        ),
+      ),
+      const SizedBox(height: 4),
       const Text(
         'Not a replacement for professional medical advice',
         textAlign: TextAlign.center,

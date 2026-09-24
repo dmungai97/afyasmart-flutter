@@ -15,9 +15,8 @@ class AffiliateDashboardScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // The shell only renders this once the summary has loaded, so reading the
-    // value directly is safe.
-    final data = ref.watch(affiliateControllerProvider).requireValue;
+    final data = ref.watch(affiliateControllerProvider).value ??
+        const AffiliateSummary.empty();
 
     return RefreshIndicator(
       color: AppColors.brand,

@@ -35,18 +35,47 @@ class AdminService {
   // ── Dashboard ───────────────────────────────────────────────────────────
 
   Future<AdminDashboard> dashboard() async {
-    final counts = await Future.wait([
-      _countAll('users'),
-      _countWhere('users', 'has_subscribed', true),
-      _countAll('doctors'),
-      _countAll('pharmacies'),
-      _countAll('drugs'),
+    final results = await Future.wait<dynamic>([
+      // 0: Counts
+      Future.wait([
+        _countAll('users'),
+        _countWhere('users', 'has_subscribed', true),
+        _countAll('doctors'),
+        _countAll('pharmacies'),
+        _countAll('drugs'),
+      ]),
+      // 1: Active Subscribers
+      supabase
+          .from('users')
+          .select('subscription_plan, is_subscribed, subscription_expires_at')
+          .eq('is_subscribed', true),
+      // 2: Paid Transactions
+      supabase
+          .from('payment_requests')
+          .select(
+            'id, phone, user_id, plan, amount, status, paid_at, created_at, updated_at',
+          )
+          .eq('paid', true),
+      // 3: Pending Payments
+      supabase
+          .from('payment_requests')
+          .select('amount, plan')
+          .eq('status', 'pending'),
+      // 4: Recent Users
+      supabase
+          .from('users')
+          .select(
+            'id, name, email, subscription_plan, is_subscribed, subscription_expires_at',
+          )
+          .order('created_at', ascending: false)
+          .limit(5),
     ]);
 
-    final subscriberRows = await supabase
-        .from('users')
-        .select('subscription_plan, is_subscribed, subscription_expires_at')
-        .eq('is_subscribed', true);
+    final counts = results[0] as List<int>;
+    final subscriberRows = results[1] as List<dynamic>;
+    final paidRows = results[2] as List<dynamic>;
+    final pendingRows = results[3] as List<dynamic>;
+    final recentRows = results[4] as List<dynamic>;
 
     var daily = 0;
     var weekly = 0;
@@ -76,13 +105,6 @@ class AdminService {
 
     final weeklyRevenue = List<double>.filled(7, 0);
     final weeklySubscribers = List<int>.filled(7, 0);
-
-    final paidRows = await supabase
-        .from('payment_requests')
-        .select(
-          'id, phone, user_id, plan, amount, status, paid_at, created_at, updated_at',
-        )
-        .eq('paid', true);
 
     var totalRevenue = 0.0;
     final transactions = <AdminTransaction>[];
@@ -114,23 +136,10 @@ class AdminService {
       );
     }
 
-    final pendingRows = await supabase
-        .from('payment_requests')
-        .select('amount, plan')
-        .eq('status', 'pending');
-
     final pendingValue = pendingRows.fold<double>(
       0,
       (sum, row) => sum + paymentAmount(row),
     );
-
-    final recentRows = await supabase
-        .from('users')
-        .select(
-          'id, name, email, subscription_plan, is_subscribed, subscription_expires_at',
-        )
-        .order('created_at', ascending: false)
-        .limit(5);
 
     transactions.sort((a, b) {
       final at = a.at, bt = b.at;
