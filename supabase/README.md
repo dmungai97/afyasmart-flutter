@@ -73,7 +73,7 @@ RS256 by hand) and `firestore.ts` (a hand-rolled REST client, duplicated in
 each function) are both gone — 5 files, ~715 lines, replaced by
 `_shared/supabase.ts`. Auth is now `supabase.auth.getUser(token)`.
 
-`verify_jwt` stays **off** for all three, and auth is enforced per-route:
+`verify_jwt` stays **off** for all of them, and auth is enforced per-route:
 
 | Function | Route | Auth |
 |---|---|---|
@@ -81,6 +81,7 @@ each function) are both gone — 5 files, ~715 lines, replaced by
 | `mpesa` | `/initiate`, `/status` | Supabase access token |
 | `mpesa` | `/callback` | **None** — Safaricom cannot send one |
 | `symptoms` | `/analyze`, `/clarify` | **None** — guest onboarding predates the account |
+| `account` | `/delete` | Supabase access token |
 
 The M-Pesa callback is unauthenticated by necessity, and the
 `CheckoutRequestID` it carries is also given to the paying client, so a forged
@@ -95,6 +96,7 @@ Deploy with `verify_jwt` off:
 supabase functions deploy chat     --no-verify-jwt
 supabase functions deploy mpesa    --no-verify-jwt
 supabase functions deploy symptoms --no-verify-jwt
+supabase functions deploy account  --no-verify-jwt
 ```
 
 Secrets (`supabase secrets set KEY=value`): `OPENAI_API_KEY`,

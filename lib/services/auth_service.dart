@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/supabase_client.dart';
@@ -178,6 +181,33 @@ class AuthService {
       await supabase.auth.resetPasswordForEmail(email.trim());
     } on AuthException catch (e) {
       throw ApiException(e.message);
+    }
+  }
+
+  /// Permanently deletes the signed-in account and everything keyed to it.
+  ///
+  /// Runs in the account edge function because deleting an auth user needs
+  /// the service role. The session is dead once this returns.
+  Future<void> deleteAccount() async {
+    final token = currentAccessToken;
+    if (token == null) {
+      throw const ApiException('You must be signed in to delete your account.');
+    }
+
+    final response = await http.post(
+      Uri.parse('${SupabaseConfig.resolvedFunctionsBaseUrl}/account/delete'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode != 200) {
+      String? message;
+      try {
+        final body = jsonDecode(response.body);
+        if (body is Map<String, dynamic>) message = body['message'] as String?;
+      } on FormatException {
+        // Non-JSON error page; fall through to the generic message.
+      }
+      throw ApiException(message ?? 'Could not delete your account.');
     }
   }
 }

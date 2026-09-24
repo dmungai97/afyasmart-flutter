@@ -236,6 +236,20 @@ class AuthController extends Notifier<AuthState> {
     await _clearLocal();
   }
 
+  /// Deletes the account server-side, then drops the now-dead session.
+  /// Throws [ApiException] with a user-facing message if the server refuses
+  /// (e.g. admin account, payout in flight); nothing is cleared in that case.
+  Future<void> deleteAccount() async {
+    await ref.read(authServiceProvider).deleteAccount();
+    try {
+      await ref.read(authServiceProvider).logout();
+    } on Exception {
+      // The auth user is already gone, so the server may reject the sign-out;
+      // clearing the local session below is what matters.
+    }
+    await _clearLocal();
+  }
+
   Future<void> _clearLocal() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_onboardedKey);

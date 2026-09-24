@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/router.dart';
+import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../state/auth_controller.dart';
 
@@ -55,6 +56,26 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (confirmed != true) return;
     await ref.read(authControllerProvider.notifier).logout();
     // The router's redirect handles where to go once the session is gone.
+  }
+
+  Future<void> _deleteAccount() async {
+    // Captured up front: the app-level messenger outlives this screen, which
+    // the router tears down as soon as the session is cleared.
+    final messenger = ScaffoldMessenger.of(context);
+
+    final deleted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _DeleteAccountDialog(),
+    );
+
+    if (deleted == true) {
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text('Your account has been deleted.')),
+        );
+    }
   }
 
   /// Several menu rows had no handler in the RN screen — tapping them did
@@ -201,7 +222,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   const SizedBox(height: 16),
                 ],
                 _logoutButton(),
-                const SizedBox(height: 28),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _deleteAccount,
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppPalette.textMuted,
+                  ),
+                  child: const Text('Delete account'),
+                ),
+                const SizedBox(height: 20),
               ],
             ),
           ),
@@ -390,6 +419,104 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ),
     ),
   );
+}
+
+/// Asks the user to type DELETE before the irreversible call, and keeps the
+/// dialog open with the server's message if it refuses (admin account,
+/// payout in flight) so they know what to do next.
+class _DeleteAccountDialog extends ConsumerStatefulWidget {
+  const _DeleteAccountDialog();
+
+  @override
+  ConsumerState<_DeleteAccountDialog> createState() =>
+      _DeleteAccountDialogState();
+}
+
+class _DeleteAccountDialogState extends ConsumerState<_DeleteAccountDialog> {
+  static const _confirmWord = 'DELETE';
+
+  final _controller = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    try {
+      await ref.read(authControllerProvider.notifier).deleteAccount();
+      if (mounted) Navigator.pop(context, true);
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } on Exception {
+      if (mounted) {
+        setState(() => _error = 'Could not reach the server. Please try again.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final confirmed = _controller.text.trim().toUpperCase() == _confirmWord;
+
+    return AlertDialog(
+      title: const Text('Delete account'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'This permanently deletes your account, chat history, payment '
+            'history and any affiliate balance you have not withdrawn. '
+            'An active subscription ends immediately and is not refunded. '
+            'This cannot be undone.',
+          ),
+          const SizedBox(height: 16),
+          const Text('Type $_confirmWord to confirm.'),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _controller,
+            enabled: !_busy,
+            autocorrect: false,
+            textCapitalization: TextCapitalization.characters,
+            decoration: const InputDecoration(hintText: _confirmWord),
+            onChanged: (_) => setState(() {}),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: const TextStyle(color: AppPalette.alert)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: confirmed && !_busy ? _submit : null,
+          style: TextButton.styleFrom(foregroundColor: AppPalette.alert),
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Delete'),
+        ),
+      ],
+    );
+  }
 }
 
 class _Stat extends StatelessWidget {
