@@ -8,8 +8,8 @@
 // deno-lint-ignore no-explicit-any
 type User = Record<string, any> | null;
 
-export const FREE_CHAT_LIMIT = 5;
-export const SYMPTOM_FREE_DAILY_LIMIT = 3;
+export const FREE_CHAT_LIMIT = 50;
+export const SYMPTOM_FREE_DAILY_LIMIT = 100;
 
 export function isSubscribed(user: User): boolean {
   if (!user) return false;

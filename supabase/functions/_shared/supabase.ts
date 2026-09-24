@@ -15,8 +15,15 @@ function env(name: string): string {
 // here rather than in the client. It must never be constructed from, or
 // leaked into, anything a request body can influence.
 export function adminClient(): SupabaseClient {
-  return createClient(env("SUPABASE_URL"), env("SUPABASE_SERVICE_ROLE_KEY"), {
+  const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
+  return createClient(env("SUPABASE_URL"), serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
+    global: {
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+      },
+    },
   });
 }
 
@@ -32,23 +39,21 @@ export class AuthError extends Error {
 export type AuthUser = { id: string; email: string | null };
 
 /**
- * Verifies the caller's Supabase access token.
- *
- * The Firebase version had to fetch Google's signing certificates, cache them,
- * and verify an RS256 signature by hand (91 lines of firebaseAuth.ts). Here
- * the auth server validates its own token.
- *
- * verify_jwt stays OFF for these functions at deploy time, because the mpesa
- * function's /callback route must be reachable by Safaricom with no token at
- * all. Auth is therefore enforced per-route, here, rather than at the edge.
+ * Verifies the caller's Supabase access token using an isolated auth client
+ * so that user bearer tokens never mutate or contaminate service_role clients.
  */
-export async function requireUser(req: Request, client: SupabaseClient): Promise<AuthUser> {
+export async function requireUser(req: Request, _client?: SupabaseClient): Promise<AuthUser> {
   const header = req.headers.get("Authorization") ?? "";
   const token = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
 
   if (!token) throw new AuthError("Missing Authorization header.");
 
-  const { data, error } = await client.auth.getUser(token);
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || env("SUPABASE_SERVICE_ROLE_KEY");
+  const authClient = createClient(env("SUPABASE_URL"), anonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data, error } = await authClient.auth.getUser(token);
   if (error || !data?.user) throw new AuthError("Invalid or expired session.");
 
   return { id: data.user.id, email: data.user.email ?? null };

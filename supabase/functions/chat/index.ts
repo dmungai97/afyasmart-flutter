@@ -1,17 +1,3 @@
-// chatSend, backed by Supabase Auth + Postgres.
-//
-// Unchanged from the Firebase-backed version: the request/response shape, the
-// free-chat limit, the system prompt, and the mock fallback when no OpenAI key
-// is configured. src/services/chat.service.ts needs no edits beyond sending a
-// Supabase access token instead of a Firebase ID token.
-//
-// chatStatus and chatHistory are still deliberately absent — the client reads
-// chat_count and history straight from the database, which RLS now scopes to
-// the caller's own rows.
-//
-// verify_jwt is OFF at deploy time; auth is enforced per-route via
-// requireUser so this function matches the mpesa one, whose callback route
-// must stay open.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { adminClient, requireUser, getAppUser, AuthError } from "../_shared/supabase.ts";
 import { json, preflight } from "../_shared/http.ts";
@@ -82,8 +68,13 @@ async function handleSend(req: Request): Promise<Response> {
     return json({ status: "error", message: "Method not allowed" }, 405);
   }
 
-  const supabase = adminClient();
-  const authUser = await requireUser(req, supabase);
+  // Auth verification uses an isolated client instance
+  const authClient = adminClient();
+  const authUser = await requireUser(req, authClient);
+
+  // Database operations use a fresh service_role client instance so
+  // permissions and RLS bypass stay intact.
+  const db = adminClient();
 
   const body = await req.json().catch(() => ({}));
   const { message, history } = body;
@@ -92,7 +83,7 @@ async function handleSend(req: Request): Promise<Response> {
     return json({ status: "error", message: "Message is required" }, 422);
   }
 
-  const user = await getAppUser(supabase, authUser.id);
+  const user = await getAppUser(db, authUser.id);
   const chatCount = user?.chat_count ?? 0;
   const subscribed = isSubscribed(user);
 
@@ -111,9 +102,7 @@ async function handleSend(req: Request): Promise<Response> {
 
   const reply = await generateReply(message, history);
 
-  // One transactional call replaces four sequential Firestore writes, so
-  // chat_count can no longer drift out of step with the stored history.
-  const { data: newCount, error } = await supabase.rpc("record_chat_exchange", {
+  const { data: newCount, error } = await db.rpc("record_chat_exchange", {
     p_user_id: authUser.id,
     p_message: message,
     p_reply: reply,
@@ -121,7 +110,10 @@ async function handleSend(req: Request): Promise<Response> {
 
   if (error) {
     console.error("record_chat_exchange failed", error);
-    return json({ status: "error", message: "Could not save the conversation." }, 500);
+    return json(
+      { status: "error", message: `Could not save conversation: ${error.message || JSON.stringify(error)}` },
+      500,
+    );
   }
 
   return json({
@@ -146,7 +138,9 @@ Deno.serve(async (req: Request) => {
       return json({ status: "error", message: error.message }, error.status);
     }
     console.error("Unhandled chat function error", error);
-    return json({ status: "error", message: "Server error" }, 500);
+    return json(
+      { status: "error", message: `Server error: ${(error as Error).message || String(error)}` },
+      500,
+    );
   }
 });
-

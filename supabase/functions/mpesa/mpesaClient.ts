@@ -31,6 +31,11 @@ export function normalizePhone(phone: string): string {
   return trimmed.replace(/^0/, "254").replace(/^\+/, "");
 }
 
+export function isValidKenyanPhone(phone: string): boolean {
+  const normalized = normalizePhone(phone);
+  return /^254[17]\d{8}$/.test(normalized);
+}
+
 export function planAmount(plan: string | undefined): number | null {
   if (plan === "daily") return 20;
   if (plan === "weekly") return 100;
@@ -46,7 +51,7 @@ export function planAmount(plan: string | undefined): number | null {
 // definitively done for (insufficient funds, wrong PIN too many times,
 // request expired, subscriber unreachable) as opposed to codes that just
 // mean "still waiting".
-export const MPESA_TERMINAL_ERROR_CODES = new Set(["1", "1037", "2001", "1019"]);
+export const MPESA_TERMINAL_ERROR_CODES = new Set(["1", "1032", "1037", "2001", "1019"]);
 
 async function getMpesaAccessToken(): Promise<string> {
   const credentials = btoa(`${env("MPESA_CONSUMER_KEY")}:${env("MPESA_CONSUMER_SECRET")}`);
