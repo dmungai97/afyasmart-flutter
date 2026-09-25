@@ -40,9 +40,9 @@ class DiagnosisResultsScreen extends ConsumerWidget {
       _ => _green,
     };
 
-    return Container(
-      color: const Color(0xFFF5F7FA),
-      child: ListView(
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7FA),
+      body: ListView(
         padding: EdgeInsets.zero,
         children: [
           _header(context),

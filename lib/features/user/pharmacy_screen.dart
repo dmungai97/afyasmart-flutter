@@ -62,9 +62,9 @@ class _PharmacyScreenState extends ConsumerState<PharmacyScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFFF5F7FA),
-      child: Column(
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7FA),
+      body: Column(
         children: [
           const CatalogueHeader(
             title: 'Pharmacy Listings',

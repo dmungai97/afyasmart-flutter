@@ -16,8 +16,6 @@ class ChatMessage {
   final String? time;
 
   bool get isUser => role == 'user';
-
-  Map<String, dynamic> toWire() => {'role': role, 'text': text};
 }
 
 class SendMessageResult {
@@ -48,7 +46,6 @@ class ChatService {
 
   Future<SendMessageResult> send({
     required String message,
-    required List<ChatMessage> history,
     required AppUser? user,
   }) async {
     if (currentUserId == null) {
@@ -69,10 +66,9 @@ class ChatService {
         'Content-Type': 'application/json',
         if (token != null) 'Authorization': 'Bearer $token',
       },
-      body: jsonEncode({
-        'message': message,
-        'history': history.map((m) => m.toWire()).toList(),
-      }),
+      // No history: the edge function reads the stored conversation itself,
+      // so app-only messages (greeting, local errors) never reach the model.
+      body: jsonEncode({'message': message}),
     );
 
     final body = _decode(response.body);

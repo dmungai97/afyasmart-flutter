@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/router.dart';
 import '../../core/supabase_client.dart';
@@ -58,6 +59,29 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     // The router's redirect handles where to go once the session is gone.
   }
 
+  /// Opens the Play Store listing, in the Play Store app when there is one.
+  /// The package id is com.afyasmart.app (see android/app/build.gradle.kts).
+  Future<void> _rateApp() async {
+    const storeApp = 'market://details?id=com.afyasmart.app';
+    const storeWeb =
+        'https://play.google.com/store/apps/details?id=com.afyasmart.app';
+
+    final opened =
+        await _tryLaunch(storeApp) || await _tryLaunch(storeWeb);
+    if (!opened && mounted) _notBuilt('Rating');
+  }
+
+  static Future<bool> _tryLaunch(String url) async {
+    try {
+      return await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+    } on Exception {
+      return false;
+    }
+  }
+
   Future<void> _deleteAccount() async {
     // Captured up front: the app-level messenger outlives this screen, which
     // the router tears down as soon as the session is cleared.
@@ -109,13 +133,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             icon: Icons.person_outline,
             label: 'Personal Information',
             sub: 'Name, email, phone',
-            onTap: null,
+            onTap: () => context.push(Routes.personalInfo),
           ),
           (
             icon: Icons.lock_outline,
             label: 'Change Password',
             sub: 'Update your password',
-            onTap: null,
+            onTap: () => context.push(Routes.changePassword),
           ),
           (
             icon: Icons.notifications_outlined,
@@ -146,7 +170,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             icon: Icons.receipt_long_outlined,
             label: 'Payment History',
             sub: 'View transactions',
-            onTap: null,
+            onTap: () => context.push(Routes.paymentHistory),
           ),
         ],
       ),
@@ -175,7 +199,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             icon: Icons.star_outline,
             label: 'Rate AfyaSmart',
             sub: 'Share your feedback',
-            onTap: null,
+            onTap: _rateApp,
           ),
         ],
       ),
@@ -361,21 +385,31 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
         ),
       ),
-      Container(
-        margin: const EdgeInsets.symmetric(horizontal: 20),
-        decoration: BoxDecoration(
+      // A Material rather than a decorated Container: ListTile paints its
+      // ripple on the nearest Material, and a coloured Container in between
+      // would hide it.
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Material(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppPalette.hairline),
-        ),
-        child: Column(
-          children: [
-            for (var i = 0; i < items.length; i++) ...[
-              if (i > 0)
-                const Divider(height: 1, indent: 56, color: AppPalette.hairline),
-              _menuRow(items[i]),
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: AppPalette.hairline),
+          ),
+          child: Column(
+            children: [
+              for (var i = 0; i < items.length; i++) ...[
+                if (i > 0)
+                  const Divider(
+                    height: 1,
+                    indent: 56,
+                    color: AppPalette.hairline,
+                  ),
+                _menuRow(items[i]),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     ],

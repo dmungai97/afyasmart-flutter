@@ -24,12 +24,15 @@ import '../features/onboarding/locked_results_screen.dart';
 import '../features/onboarding/symptom_chat_screen.dart';
 import '../features/onboarding/welcome_screen.dart';
 import '../features/shell/tab_shell.dart';
+import '../features/user/change_password_screen.dart';
 import '../features/user/chat_screen.dart';
 import '../features/user/diagnosis_results_screen.dart';
 import '../features/user/doctors_screen.dart';
 import '../features/user/drugs_screen.dart';
 import '../features/user/home_screen.dart';
 import '../features/user/map_screen.dart';
+import '../features/user/payment_history_screen.dart';
+import '../features/user/personal_info_screen.dart';
 import '../features/user/pharmacy_screen.dart';
 import '../features/user/profile_screen.dart';
 import '../features/user/subscription_screen.dart';
@@ -65,6 +68,9 @@ abstract final class Routes {
   static const map = '/map';
   static const subscription = '/subscription';
   static const profile = '/profile';
+  static const personalInfo = '/profile/personal-info';
+  static const changePassword = '/profile/change-password';
+  static const paymentHistory = '/profile/payments';
 
   static const admin = '/admin';
   static const adminUsers = '/admin/users';
@@ -99,6 +105,9 @@ abstract final class Routes {
     map,
     subscription,
     profile,
+    personalInfo,
+    changePassword,
+    paymentHistory,
   };
 
   /// Routes that require an active subscription. Note that [subscription]
@@ -244,6 +253,20 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, _) => const PharmacyScreen(),
       ),
       GoRoute(path: Routes.drugs, builder: (_, _) => const DrugsScreen()),
+      // Profile sub-pages sit outside the tab shell, like subscription, so
+      // they open full-screen with their own back arrow.
+      GoRoute(
+        path: Routes.personalInfo,
+        builder: (_, _) => const PersonalInfoScreen(),
+      ),
+      GoRoute(
+        path: Routes.changePassword,
+        builder: (_, _) => const ChangePasswordScreen(),
+      ),
+      GoRoute(
+        path: Routes.paymentHistory,
+        builder: (_, _) => const PaymentHistoryScreen(),
+      ),
       GoRoute(
         path: Routes.subscription,
         builder: (_, goState) => SubscriptionScreen(

@@ -223,39 +223,31 @@ class HomeScreen extends ConsumerWidget {
     // the 3-checks-a-day server quota instead of the paywall.
     final features = [
       (
-        icon: Icons.chat_bubble,
+        icon: Icons.chat_bubble_outline_rounded,
         title: 'Health Assistant',
         subtitle: 'AI Chatbot',
         route: Routes.chat,
-        color: AppPalette.purple,
-        bg: AppPalette.purpleBg,
         premium: false,
       ),
       (
-        icon: Icons.monitor_heart,
+        icon: Icons.monitor_heart_outlined,
         title: 'Symptoms',
         subtitle: 'Checker',
         route: Routes.symptoms,
-        color: AppPalette.green,
-        bg: AppPalette.greenBg,
         premium: false,
       ),
       (
-        icon: Icons.medical_services,
+        icon: Icons.medication_outlined,
         title: 'Drugs',
         subtitle: 'Database',
         route: Routes.drugs,
-        color: AppPalette.orange,
-        bg: AppPalette.orangeBg,
         premium: true,
       ),
       (
-        icon: Icons.location_on,
+        icon: Icons.location_on_outlined,
         title: 'Nearby Health',
         subtitle: 'Services',
         route: Routes.map,
-        color: AppPalette.red,
-        bg: AppPalette.redBg,
         premium: true,
       ),
     ];
@@ -274,8 +266,6 @@ class HomeScreen extends ConsumerWidget {
             icon: f.icon,
             title: f.title,
             subtitle: f.subtitle,
-            color: f.color,
-            bg: f.bg,
             // A locked card routes to the paywall rather than the feature.
             // The router would redirect anyway; doing it here means the tap
             // lands somewhere useful instead of bouncing.
@@ -293,8 +283,6 @@ class HomeScreen extends ConsumerWidget {
     required IconData icon,
     required String title,
     required String subtitle,
-    required Color color,
-    required Color bg,
     required VoidCallback onTap,
     required bool locked,
   }) => Material(
@@ -316,8 +304,8 @@ class HomeScreen extends ConsumerWidget {
                 right: 0,
                 top: 0,
                 child: Icon(
-                  Icons.lock,
-                  size: 12,
+                  Icons.lock_outline_rounded,
+                  size: 14,
                   color: AppPalette.textMuted,
                 ),
               ),
@@ -326,14 +314,16 @@ class HomeScreen extends ConsumerWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
+                // One neutral treatment for every feature: colour-coding four
+                // tiles added noise without telling the user anything.
                 Container(
-                  width: 46,
-                  height: 46,
-                  decoration: BoxDecoration(
-                    color: bg,
-                    borderRadius: BorderRadius.circular(14),
+                  width: 42,
+                  height: 42,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF2F4F5),
+                    shape: BoxShape.circle,
                   ),
-                  child: Icon(icon, size: 24, color: color),
+                  child: Icon(icon, size: 22, color: AppColors.brand),
                 ),
                 const SizedBox(height: 8),
                 Text(

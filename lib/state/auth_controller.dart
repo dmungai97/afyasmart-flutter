@@ -236,6 +236,18 @@ class AuthController extends Notifier<AuthState> {
     await _clearLocal();
   }
 
+  /// Saves name and phone, then re-reads the profile so every screen showing
+  /// them updates.
+  Future<void> updateProfile({
+    required String name,
+    required String phone,
+  }) async {
+    await ref
+        .read(authServiceProvider)
+        .updateProfile(name: name, phone: phone);
+    await refresh();
+  }
+
   /// Deletes the account server-side, then drops the now-dead session.
   /// Throws [ApiException] with a user-facing message if the server refuses
   /// (e.g. admin account, payout in flight); nothing is cleared in that case.

@@ -203,9 +203,9 @@ class _SymptomsScreenState extends ConsumerState<SymptomsScreen> {
   });
 
   @override
-  Widget build(BuildContext context) => Container(
-    color: const Color(0xFFF5F7FA),
-    child: SafeArea(
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: const Color(0xFFF5F7FA),
+    body: SafeArea(
       bottom: false,
       child: switch (_step) {
         _Step.entry => _entry(),

@@ -6,6 +6,39 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/supabase_client.dart';
 import '../models/app_user.dart';
 
+/// One row of payment_requests, as shown in Payment History.
+class PaymentRecord {
+  const PaymentRecord({
+    required this.id,
+    required this.plan,
+    required this.amount,
+    required this.status,
+    this.phone,
+    this.failureReason,
+    this.createdAt,
+  });
+
+  factory PaymentRecord.fromRow(Map<String, dynamic> row) => PaymentRecord(
+    id: row['id'] as String,
+    plan: row['plan'] as String? ?? '',
+    amount: (row['amount'] as num?)?.toDouble() ?? 0,
+    status: row['status'] as String? ?? 'pending',
+    phone: row['phone'] as String?,
+    failureReason: row['failure_reason'] as String?,
+    createdAt: DateTime.tryParse(row['created_at'] as String? ?? '')?.toLocal(),
+  );
+
+  final String id;
+  final String plan;
+  final double amount;
+
+  /// 'pending', 'paid', 'failed' or 'cancelled' (the payment_status enum).
+  final String status;
+  final String? phone;
+  final String? failureReason;
+  final DateTime? createdAt;
+}
+
 /// Port of src/services/auth.service.ts.
 class AuthService {
   const AuthService();
@@ -182,6 +215,95 @@ class AuthService {
     } on AuthException catch (e) {
       throw ApiException(e.message);
     }
+  }
+
+  /// Kenyan mobile number in any of the forms people type it: 07.., 01..,
+  /// 2547.., +2547... Mirrors isValidKenyanPhone() in the mpesa function, so
+  /// a number saved here is one an STK push will accept.
+  static bool isValidKenyanPhone(String phone) {
+    final digits = phone.trim().replaceAll(RegExp(r'[\s-]'), '');
+    final normalized = digits
+        .replaceFirst(RegExp(r'^\+'), '')
+        .replaceFirst(RegExp(r'^0'), '254');
+    return RegExp(r'^254[17]\d{8}$').hasMatch(normalized);
+  }
+
+  /// Updates the caller's name and phone. RLS limits this to their own row
+  /// and a column grant limits it to these fields.
+  Future<void> updateProfile({
+    required String name,
+    required String phone,
+  }) async {
+    final userId = currentUserId;
+    if (userId == null) {
+      throw const ApiException('You must be signed in to update your profile.');
+    }
+
+    final trimmedName = name.trim();
+    // Stored without spaces or dashes: the mpesa function strips whitespace
+    // but not dashes when it normalizes a number.
+    final trimmedPhone = phone.trim().replaceAll(RegExp(r'[\s-]'), '');
+    if (trimmedName.isEmpty) throw const ApiException('Enter your name.');
+    if (!isValidKenyanPhone(trimmedPhone)) {
+      throw const ApiException(
+        'Enter a valid Safaricom or Airtel number, e.g. 0712 345 678.',
+      );
+    }
+
+    try {
+      await supabase
+          .from('users')
+          .update({'name': trimmedName, 'phone': trimmedPhone})
+          .eq('id', userId);
+    } on PostgrestException catch (e) {
+      throw ApiException(e.message);
+    }
+  }
+
+  /// Sets a new password for the signed-in user. Also works for accounts
+  /// created with Google, giving them a password they can sign in with.
+  Future<void> changePassword(String newPassword) async {
+    if (newPassword.length < 6) {
+      throw const ApiException('Password must be at least 6 characters.');
+    }
+
+    try {
+      await supabase.auth.updateUser(UserAttributes(password: newPassword));
+    } on AuthException catch (e) {
+      // With "secure password change" on, Supabase refuses on a session
+      // older than 24h until the user re-authenticates.
+      if (e.code == 'reauthentication_needed' ||
+          e.message.toLowerCase().contains('reauthenticat')) {
+        throw const ApiException(
+          'For your security, please log out and sign in again, then change '
+          'your password.',
+        );
+      }
+      if (e.code == 'same_password') {
+        throw const ApiException(
+          'Your new password must be different from the current one.',
+        );
+      }
+      throw ApiException(e.message);
+    }
+  }
+
+  /// The caller's M-Pesa payment attempts, newest first. RLS scopes the
+  /// rows to the caller; the filter is for clarity, not security.
+  Future<List<PaymentRecord>> paymentHistory() async {
+    final userId = currentUserId;
+    if (userId == null) {
+      throw const ApiException('You must be signed in to view payments.');
+    }
+
+    final rows = await supabase
+        .from('payment_requests')
+        .select('id, plan, amount, status, phone, failure_reason, created_at')
+        .eq('user_id', userId)
+        .order('created_at', ascending: false)
+        .limit(100);
+
+    return rows.map(PaymentRecord.fromRow).toList();
   }
 
   /// Permanently deletes the signed-in account and everything keyed to it.

@@ -161,6 +161,8 @@ class AuthField extends StatefulWidget {
     this.showCheckWhenFilled = false,
     this.textInputAction,
     this.onSubmitted,
+    this.enabled = true,
+    this.helperText,
     super.key,
   });
 
@@ -173,6 +175,8 @@ class AuthField extends StatefulWidget {
   final bool showCheckWhenFilled;
   final TextInputAction? textInputAction;
   final VoidCallback? onSubmitted;
+  final bool enabled;
+  final String? helperText;
 
   @override
   State<AuthField> createState() => _AuthFieldState();
@@ -219,15 +223,22 @@ class _AuthFieldState extends State<AuthField> {
         TextField(
           controller: widget.controller,
           focusNode: _focus,
+          enabled: widget.enabled,
           keyboardType: widget.keyboardType,
           obscureText: _obscured,
           autocorrect: false,
           textInputAction: widget.textInputAction,
           onSubmitted: (_) => widget.onSubmitted?.call(),
           cursorColor: AuthPalette.teal,
-          style: const TextStyle(fontSize: 15, color: Color(0xFF1A202C)),
+          style: TextStyle(
+            fontSize: 15,
+            color: widget.enabled
+                ? const Color(0xFF1A202C)
+                : AuthPalette.hint,
+          ),
           decoration: InputDecoration(
             hintText: widget.hint,
+            helperText: widget.helperText,
             hintStyle: const TextStyle(color: AuthPalette.hint),
             filled: true,
             fillColor: const Color(0xFFF7FAFA),
@@ -240,6 +251,7 @@ class _AuthFieldState extends State<AuthField> {
             enabledBorder: _border(const Color(0xFFE2E8F0)),
             focusedBorder: _border(AuthPalette.teal, width: 1.5),
             border: _border(const Color(0xFFE2E8F0)),
+            disabledBorder: _border(const Color(0xFFEDF2F7)),
           ),
         ),
       ],

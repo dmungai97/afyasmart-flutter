@@ -3,5 +3,21 @@
     "source.fixAll": "explicit",
     "source.organizeImports": "explicit",
     "source.sortMembers": "explicit"
-  }
+  },
+  // Flutter drives the Android build; stop the Java extension importing
+  // android/ as an Eclipse/Buildship Gradle project.
+  "java.import.gradle.enabled": false,
+  "java.import.exclusions": [
+    "**/node_modules/**",
+    "**/.metadata/**",
+    "**/archetype-resources/**",
+    "**/META-INF/maven/**",
+    "**/android/**"
+  ],
+  "java.configuration.updateBuildConfiguration": "disabled",
+  // supabase/functions is Deno, not Node: jsr: imports and the Deno global
+  // only resolve under the Deno language server. Scoped to that folder so the
+  // rest of the workspace keeps the normal TypeScript server.
+  "deno.enablePaths": ["supabase/functions"],
+  "deno.lint": true
 }
