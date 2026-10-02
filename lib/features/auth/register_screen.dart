@@ -246,15 +246,17 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         ),
                 ),
               ),
-              const SizedBox(height: 18),
-              GoogleSignInButton(
-                enabled: !_loading,
-                onStart: () => setState(() => _loading = true),
-                onFinish: () {
-                  if (mounted) setState(() => _loading = false);
-                },
-                onError: _showMessage,
-              ),
+              if (GoogleSignInButton.isSupported) ...[
+                const SizedBox(height: 18),
+                GoogleSignInButton(
+                  enabled: !_loading,
+                  onStart: () => setState(() => _loading = true),
+                  onFinish: () {
+                    if (mounted) setState(() => _loading = false);
+                  },
+                  onError: _showMessage,
+                ),
+              ],
               const SizedBox(height: 18),
               Center(
                 child: Wrap(

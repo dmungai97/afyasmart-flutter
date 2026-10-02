@@ -175,17 +175,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ),
                 const SizedBox(height: 4),
                 _signInButton(),
-                const SizedBox(height: 20),
-                _divider(),
-                const SizedBox(height: 16),
-                GoogleSignInButton(
-                  enabled: !_loading,
-                  onStart: () => setState(() => _loading = true),
-                  onFinish: () {
-                    if (mounted) setState(() => _loading = false);
-                  },
-                  onError: _showError,
-                ),
+                if (GoogleSignInButton.isSupported) ...[
+                  const SizedBox(height: 20),
+                  _divider(),
+                  const SizedBox(height: 16),
+                  GoogleSignInButton(
+                    enabled: !_loading,
+                    onStart: () => setState(() => _loading = true),
+                    onFinish: () {
+                      if (mounted) setState(() => _loading = false);
+                    },
+                    onError: _showError,
+                  ),
+                ],
                 const SizedBox(height: 18),
                 Center(
                   child: Wrap(
