@@ -5,7 +5,8 @@
       "namespace": "android_app",
       "package_name": "com.afyasmart.app",
       "sha256_cert_fingerprints": [
-        "REPLACE_WITH_RELEASE_SIGNING_KEY_SHA256"
+        "16:41:BE:1B:36:13:7A:67:A9:BB:D0:78:E7:62:6A:0D:E8:4C:6A:E4:79:8F:65:97:5B:D1:11:4E:7C:38:29:C4",
+        "60:DE:32:12:DB:E9:BF:8A:4B:DA:0C:8F:09:90:95:5A:78:86:B8:F1:33:CF:83:28:91:86:F1:D5:80:C3:C5:DA"
       ]
     }
   }
