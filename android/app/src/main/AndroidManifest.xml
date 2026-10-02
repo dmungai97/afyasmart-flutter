@@ -41,6 +41,12 @@
                 <data android:scheme="https" android:host="afyasmart.app" android:pathPrefix="/login"/>
             </intent-filter>
         </activity>
+        <!-- Background pushes posted by FCM use the same high-importance
+             channel the app creates at startup (PushService._channel), so
+             they show as heads-up like foreground ones. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="afyasmart_default"/>
         <!-- Mapbox Access Token -->
         <meta-data
             android:name="com.mapbox.token"

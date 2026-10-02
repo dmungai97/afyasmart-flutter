@@ -39,7 +39,7 @@ class AfyaSmartApp extends ConsumerStatefulWidget {
 }
 
 class _AfyaSmartAppState extends ConsumerState<AfyaSmartApp> {
-  final _subs = <StreamSubscription<RemoteMessage>>[];
+  final _subs = <StreamSubscription<Object?>>[];
 
   /// A tap that launched the app arrives while auth is still loading, when
   /// the router would bounce it to the splash screen. Held until auth settles.
@@ -51,10 +51,11 @@ class _AfyaSmartAppState extends ConsumerState<AfyaSmartApp> {
     final push = ref.read(pushServiceProvider);
 
     _subs
-      ..add(push.onForegroundMessage.listen(_showInApp))
-      ..add(push.onOpened.listen(_open));
+      ..add(push.onForegroundMessage.listen(_onForeground))
+      ..add(push.onOpened.listen((m) => _open(m.data)))
+      ..add(push.onPanelTap.listen(_open));
     push.initialMessage().then((m) {
-      if (m != null) _open(m);
+      if (m != null) _open(m.data);
     });
   }
 
@@ -66,9 +67,11 @@ class _AfyaSmartAppState extends ConsumerState<AfyaSmartApp> {
     super.dispose();
   }
 
-  /// FCM shows nothing while the app is in the foreground, so surface it as
-  /// a snackbar; the inbox has already updated through Realtime.
-  void _showInApp(RemoteMessage message) {
+  /// FCM shows nothing while the app is in the foreground, so post it to the
+  /// notification panel ourselves; a snackbar is only the fallback. The inbox
+  /// has already updated through Realtime either way.
+  Future<void> _onForeground(RemoteMessage message) async {
+    if (await ref.read(pushServiceProvider).showInPanel(message)) return;
     final n = message.notification;
     if (n == null) return;
     scaffoldMessengerKey.currentState
@@ -78,21 +81,21 @@ class _AfyaSmartAppState extends ConsumerState<AfyaSmartApp> {
           content: Text(n.title == null ? (n.body ?? '') : '${n.title}\n${n.body ?? ''}'),
           action: message.data['route'] == null
               ? null
-              : SnackBarAction(label: 'View', onPressed: () => _open(message)),
+              : SnackBarAction(label: 'View', onPressed: () => _open(message.data)),
         ),
       );
   }
 
   /// The router's redirect still applies, so a route the user may not see
   /// (signed out, unsubscribed) lands wherever it normally would.
-  void _open(RemoteMessage message) {
-    final id = message.data['notification_id'];
+  void _open(Map<String, dynamic> data) {
+    final id = data['notification_id'];
     if (id is String) {
       unawaited(
         ref.read(notificationsServiceProvider).markRead(id).catchError((_) {}),
       );
     }
-    final route = message.data['route'];
+    final route = data['route'];
     if (route is! String || !route.startsWith('/')) return;
     if (ref.read(authControllerProvider).loading) {
       _pendingRoute = route;

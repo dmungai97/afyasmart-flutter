@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../core/supabase_client.dart';
 
@@ -48,6 +50,22 @@ class PushService {
   bool _ready = false;
   StreamSubscription<String>? _refreshSub;
 
+  /// FCM posts to the notification panel only while the app is in the
+  /// background. Foreground messages are re-posted through this on Android so
+  /// they land in the panel too; iOS does it natively (see init).
+  final _local = FlutterLocalNotificationsPlugin();
+  final _localTaps = StreamController<Map<String, dynamic>>.broadcast();
+
+  /// Must match default_notification_channel_id in AndroidManifest.xml, so
+  /// background (FCM-posted) and foreground (re-posted) notifications share
+  /// one high-importance channel and both show as heads-up.
+  static const _channel = AndroidNotificationChannel(
+    'afyasmart_default',
+    'AfyaSmart notifications',
+    description: 'Payments, subscription reminders and affiliate earnings',
+    importance: Importance.high,
+  );
+
   /// Only Android and iOS receive pushes; web and Windows use the inbox.
   static bool get _supported =>
       !kIsWeb &&
@@ -69,10 +87,71 @@ class PushService {
         await Firebase.initializeApp();
       }
       _ready = true;
+      await _initPresentation();
     } on Object catch (e) {
       debugPrint('[Push] disabled: $e');
     }
   }
+
+  Future<void> _initPresentation() async {
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      return;
+    }
+
+    await _local.initialize(
+      settings: const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      ),
+      onDidReceiveNotificationResponse: (r) {
+        final payload = r.payload;
+        if (payload == null || payload.isEmpty) return;
+        try {
+          _localTaps.add((jsonDecode(payload) as Map).cast<String, dynamic>());
+        } on FormatException {
+          // Not one of ours.
+        }
+      },
+    );
+    await _local
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(_channel);
+  }
+
+  /// Makes sure a foreground message reaches the notification panel: posts
+  /// it on Android, and on iOS reports that the system already showed it.
+  /// Returns false only when it could not be shown (push off, data-only
+  /// message), so the caller can fall back to an in-app banner.
+  Future<bool> showInPanel(RemoteMessage message) async {
+    final n = message.notification;
+    if (!_ready || n == null) return false;
+    if (defaultTargetPlatform == TargetPlatform.iOS) return true;
+
+    await _local.show(
+      id: message.hashCode & 0x7fffffff,
+      title: n.title,
+      body: n.body,
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channel.id,
+          _channel.name,
+          channelDescription: _channel.description,
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+      ),
+      payload: jsonEncode(message.data),
+    );
+    return true;
+  }
+
+  /// Message data from taps on notifications posted by [showInPanel], in the
+  /// same shape as [RemoteMessage.data].
+  Stream<Map<String, dynamic>> get onPanelTap => _localTaps.stream;
 
   /// Foreground messages. FCM does not show a system notification while the
   /// app is open, so the app surfaces these itself.
