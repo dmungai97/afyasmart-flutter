@@ -122,10 +122,15 @@ One-time setup:
 2. For iOS, upload an APNs auth key (.p8) under Project settings → Cloud
    Messaging, and enable the Push Notifications capability in Xcode.
 3. Project settings → Service accounts → Generate new private key, then:
-   ```bash
-   supabase secrets set FCM_SERVICE_ACCOUNT="$(cat service-account.json)"
+   Set it base64-encoded. Passing the raw JSON from Windows PowerShell 5.1
+   strips its quotes and the push function cannot parse it:
+   ```powershell
+   $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("service-account.json"))
+   supabase secrets set FCM_SERVICE_ACCOUNT=$b64
    supabase secrets set PUSH_WEBHOOK_SECRET=<long random string>
    ```
+   (bash: `supabase secrets set FCM_SERVICE_ACCOUNT=$(base64 -w0 service-account.json)`).
+   Delete the key file afterwards.
 4. In the SQL editor, so the trigger knows where to call:
    ```sql
    select vault.create_secret('https://<ref>.supabase.co', 'project_url');
@@ -140,6 +145,9 @@ One-time setup:
      --dart-define=FIREBASE_ANDROID_APP_ID=... \
      --dart-define=FIREBASE_IOS_APP_ID=...
    ```
+
+To diagnose a push that did not arrive, the function's response for each
+notification is in `net._http_response` (newest first by `created`).
 
 Until steps 3–5 are done nothing breaks: notifications still reach the in-app
 inbox, the trigger skips the call, and the app runs with push off.
