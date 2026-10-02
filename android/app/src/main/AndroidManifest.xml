@@ -47,6 +47,15 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="afyasmart_default"/>
+        <!-- Status-bar icon for FCM-posted notifications: Android renders it
+             as a white silhouette, so the full-colour launcher icon would
+             show as a plain square. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification"/>
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/ic_launcher_background"/>
         <!-- Mapbox Access Token -->
         <meta-data
             android:name="com.mapbox.token"

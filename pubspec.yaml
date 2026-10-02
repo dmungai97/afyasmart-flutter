@@ -111,21 +111,21 @@ flutter:
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
 
-# App icons. assets/branding/ currently holds Expo's template placeholder
-# (the blue "A" on a grid), not AfyaSmart artwork, so this points at files
-# that do not exist yet. Add the real artwork, then run:
-#
-#   dart run flutter_launcher_icons
+# App icons, generated with `dart run flutter_launcher_icons` from:
 #
 #   app-icon.png             1024x1024, no transparency (iOS rejects alpha)
-#   app-icon-foreground.png  1024x1024, logo inside the central ~66% safe zone,
+#   app-icon-foreground.png  1024x1024, mark inside the central ~66% safe zone,
 #                            transparent around it (Android adaptive icon)
+#
+# The current artwork is a simple teal cross, a stand-in until there is a
+# designed logo. The other files in assets/branding/ are Expo's template
+# placeholders and are not used.
 flutter_launcher_icons:
   image_path: assets/branding/app-icon.png
   android: true
   ios: true
   remove_alpha_ios: true
-  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_background: "#005454"
   adaptive_icon_foreground: assets/branding/app-icon-foreground.png
   web:
     generate: true

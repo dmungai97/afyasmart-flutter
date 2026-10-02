@@ -105,7 +105,7 @@ class PushService {
 
     await _local.initialize(
       settings: const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        android: AndroidInitializationSettings('@drawable/ic_notification'),
       ),
       onDidReceiveNotificationResponse: (r) {
         final payload = r.payload;
