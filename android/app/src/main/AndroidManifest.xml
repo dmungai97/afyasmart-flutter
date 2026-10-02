@@ -30,13 +30,18 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Affiliate referral links (https://afyasmart.app/register?ref=CODE)
-                 open the app instead of the browser. autoVerify needs
-                 web/.well-known/assetlinks.json served from the same host. -->
+            <!-- Affiliate referral links (https://<host>/register?ref=CODE, see
+                 lib/core/app_links.dart) open the app instead of the browser.
+                 autoVerify needs web/.well-known/assetlinks.json served from
+                 each host. afya-smart-377ad.web.app is the live Firebase
+                 Hosting site; afyasmart.app is kept for when that domain is
+                 registered and connected. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="afya-smart-377ad.web.app" android:pathPrefix="/register"/>
+                <data android:scheme="https" android:host="afya-smart-377ad.web.app" android:pathPrefix="/login"/>
                 <data android:scheme="https" android:host="afyasmart.app" android:pathPrefix="/register"/>
                 <data android:scheme="https" android:host="afyasmart.app" android:pathPrefix="/login"/>
             </intent-filter>

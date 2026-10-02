@@ -162,7 +162,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       final auth = ref.read(authControllerProvider);
       final location = goState.matchedLocation;
 
-      // A link that cold-starts the app (afyasmart.app/register?ref=...)
+      // A link that cold-starts the app (.../register?ref=..., see AppLinks)
       // arrives while auth is still hydrating. Parking on a bare splash would
       // drop it, and the referral with it, so the target rides along as
       // ?next= and is resumed below once auth settles.

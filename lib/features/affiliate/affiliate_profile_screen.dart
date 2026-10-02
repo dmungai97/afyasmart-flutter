@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/app_links.dart';
 import '../../core/router.dart';
 import '../../core/theme.dart';
 import '../../services/affiliate_service.dart';
@@ -158,7 +159,7 @@ class _ShareCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final link = 'https://afyasmart.app/register?ref=$code';
+    final link = AppLinks.referral(code);
 
     return AffiliateCard(
       child: Column(
