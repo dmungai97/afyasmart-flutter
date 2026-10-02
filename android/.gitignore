@@ -15,3 +15,6 @@ key.properties
 
 # Gradle output when building from android/ directly
 /build/
+
+# Local tokens; see secrets.properties.example.
+secrets.properties

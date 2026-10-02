@@ -6,7 +6,7 @@
     <!-- Chat, M-Pesa and the symptom endpoints are all network calls. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="afyasmart"
+        android:label="AfyaSmart"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -30,15 +30,24 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Affiliate referral links (https://afyasmart.app/register?ref=CODE)
+                 open the app instead of the browser. autoVerify needs
+                 web/.well-known/assetlinks.json served from the same host. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="afyasmart.app" android:pathPrefix="/register"/>
+                <data android:scheme="https" android:host="afyasmart.app" android:pathPrefix="/login"/>
+            </intent-filter>
         </activity>
-        <!-- google_maps_flutter reads the key from here. Supplied at build
-             time via the Gradle property mapsApiKey, so it never lands in
-             version control. Pass it with "-PmapsApiKey=YOUR_KEY" on the
-             build command. Without it the map renders as a blank grey
-             plane. -->
+        <!-- Mapbox Access Token -->
         <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="${mapsApiKey}"/>
+            android:name="com.mapbox.token"
+            android:value="${mapboxApiKey}"/>
+        <meta-data
+            android:name="MBXAccessToken"
+            android:value="${mapboxApiKey}"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

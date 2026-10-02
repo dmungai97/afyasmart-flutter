@@ -1,1 +1,4 @@
 #include "Generated.xcconfig"
+#include "GoogleSignIn.xcconfig"
+// Local, gitignored tokens (MAPBOX_ACCESS_TOKEN); see Secrets.xcconfig.example.
+#include? "Secrets.xcconfig"
