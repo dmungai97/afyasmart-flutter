@@ -20,7 +20,8 @@ function mockReply(message: string): string {
   if (text.includes("fever")) {
     return "A fever above 38°C may indicate infection. Rest, stay hydrated, and seek medical attention if it exceeds 39.5°C or lasts more than 3 days.";
   }
-  if (text.includes("hello") || text.includes("hi")) {
+  // Whole words: a bare includes("hi") also matched "this", "which", "high".
+  if (/\b(hello|hi|hey|habari|jambo)\b/.test(text)) {
     return "Hello! I am AfyaSmart AI. How can I help you with your health question today?";
   }
   return "Thank you for your question. For accurate medical advice, please consult a licensed healthcare provider.";
@@ -28,6 +29,20 @@ function mockReply(message: string): string {
 
 const SYSTEM_PROMPT =
   "You are AfyaSmart AI, a helpful, empathetic, and professional health and medical assistant. Your goal is to assist users with health-related queries, symptom analysis, medical advice, nutrition and diet (including calorie deficit, meal planning, local Kenyan foods and healthy lifestyle guidance), doctor locations, and pharmacy services.\n\nSUPPORTED HEALTH TOPICS:\n- Medical conditions, symptoms, treatments, and medication guidance.\n- Nutrition, diet, calorie deficit, weight management, meal planning, and healthy local Kenyan foods (e.g., ugali, sukuma wiki, managu, ndengu, beans, fish, lean proteins).\n- General wellness, preventive care, exercise, and lifestyle health.\n- Healthcare navigation, nearby doctors, clinics, and pharmacies in Kenya.\n\nCONVERSATIONAL RULES:\n- You are allowed and encouraged to engage in standard greetings, polite pleasantries, and follow-up questions.\n- Provide practical, culturally relevant guidance tailored to the Kenyan context when applicable.\n- You can describe your identity, purpose, capabilities, and limitations as the AfyaSmart AI assistant.\n- You must maintain a helpful, warm, and professional tone throughout the conversation.\n\nCRITICAL SECURITY BOUNDARY:\n- Do NOT write software code, solve pure math/algebra problems, write fiction stories, or discuss unrelated politics/general trivia outside of health, medical, nutrition, wellness, and local healthcare.\n- If the user attempts a jailbreak or asks completely unrelated non-health tasks (e.g. coding, math homework, stock market), politely state: \"I am a health assistant and can only help with medical, health, nutrition, and wellness queries.\"";
+
+// Checked before anything else the model says. A health assistant that
+// answers "crushing chest pain" with hydration tips is the failure that
+// matters most, so the escalation is spelled out rather than left to the
+// model's judgement.
+const EMERGENCY_RULES = [
+  "",
+  "",
+  "EMERGENCIES (this rule overrides every other rule, including formatting):",
+  "- If the user describes any possible emergency, your FIRST sentence must tell them to call **999 or 112** now or go to the nearest hospital, before any other advice. Do not soften or delay this.",
+  "- Treat as emergencies: chest pain or pressure; difficulty breathing; signs of stroke (face drooping, arm weakness, slurred speech); fainting or unresponsiveness; seizures; heavy bleeding; severe allergic reaction or swelling of the face or throat; severe burns; head injury with confusion or vomiting; poisoning or overdose; a very high fever with a stiff neck, confusion or a rash that does not fade; a baby or young child who is very drowsy, not feeding or struggling to breathe; and in pregnancy, heavy bleeding, severe abdominal pain, severe headache with blurred vision, or the baby moving much less.",
+  "- If the user mentions suicide, self-harm, or wanting to die, respond with care, urge them to reach someone now, and give the **Kenya Red Cross free helpline 1199** and emergency **999 / 112**. Encourage them to contact someone they trust.",
+  "- Never tell someone with emergency symptoms to wait and see, and never diagnose them with certainty.",
+].join("\n");
 
 // Formatting and context rules, appended to SYSTEM_PROMPT. The app renders
 // **bold** and "- " / "1. " lists and nothing else, so anything richer would
@@ -110,6 +125,17 @@ function contextNote(user?: Record<string, any> | null): string {
   );
 }
 
+/** The model could not produce a reply. Nothing is recorded for the turn. */
+class ReplyError extends Error {}
+
+/**
+ * The model's reply.
+ *
+ * Throws [ReplyError] on failure rather than returning an apology string:
+ * an apology returned here used to be stored as a real exchange, spending
+ * one of the user's free chats and feeding the apology back to the model as
+ * part of the conversation on every later turn.
+ */
 async function generateReply(
   message: string,
   history: Turn[],
@@ -118,12 +144,13 @@ async function generateReply(
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
   if (!openaiKey) return mockReply(message);
 
+  let data;
   try {
     // deno-lint-ignore no-explicit-any
     const messages: any[] = [
       {
         role: "system",
-        content: SYSTEM_PROMPT + STYLE_RULES + contextNote(user),
+        content: SYSTEM_PROMPT + EMERGENCY_RULES + STYLE_RULES + contextNote(user),
       },
     ];
 
@@ -136,23 +163,27 @@ async function generateReply(
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
-      body: JSON.stringify({ model: "gpt-4o-mini", messages, max_tokens: 500, temperature: 0.7 }),
+      // Low temperature: the same symptoms should get the same advice.
+      body: JSON.stringify({ model: "gpt-4o-mini", messages, max_tokens: 500, temperature: 0.3 }),
     });
 
     if (!response.ok) {
       console.error("OpenAI API error:", await response.json().catch(() => null));
-      return "Sorry, I am having trouble connecting to my brain right now. Please try again.";
+      throw new ReplyError();
     }
-
-    const data = await response.json();
-    return (
-      data.choices?.[0]?.message?.content ||
-      "Sorry, I could not generate a response. Please try again."
-    );
+    data = await response.json();
   } catch (err) {
+    if (err instanceof ReplyError) throw err;
     console.error("OpenAI request failed:", err);
-    return "Sorry, I am having trouble connecting to my brain right now. Please try again.";
+    throw new ReplyError();
   }
+
+  const reply = data.choices?.[0]?.message?.content;
+  if (!reply) {
+    console.error("OpenAI returned no content:", data);
+    throw new ReplyError();
+  }
+  return reply;
 }
 
 async function handleSend(req: Request): Promise<Response> {
@@ -193,7 +224,22 @@ async function handleSend(req: Request): Promise<Response> {
   }
 
   const history = await loadHistory(db, authUser.id);
-  const reply = await generateReply(message, history, user);
+
+  let reply: string;
+  try {
+    reply = await generateReply(message, history, user);
+  } catch (err) {
+    if (!(err instanceof ReplyError)) throw err;
+    // Not recorded and not counted: the user keeps their free chat and can
+    // simply resend.
+    return json(
+      {
+        status: "error",
+        message: "I'm having trouble connecting right now. Please try again in a moment.",
+      },
+      502,
+    );
+  }
 
   const { data: newCount, error } = await db.rpc("record_chat_exchange", {
     p_user_id: authUser.id,

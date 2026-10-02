@@ -118,6 +118,16 @@ class ChatService {
         .toList();
   }
 
+  /// Clears the conversation so the next message starts fresh, for the
+  /// model as well as on screen. The exchanges stay in chat_logs and the
+  /// free-chat count is unchanged; see start_new_chat().
+  Future<void> startNewChat() async {
+    if (currentUserId == null) {
+      throw const ApiException('You must be signed in to use chat.');
+    }
+    await supabase.rpc<void>('start_new_chat');
+  }
+
   static Map<String, dynamic>? _decode(String body) {
     try {
       final decoded = jsonDecode(body);

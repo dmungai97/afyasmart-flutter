@@ -26,18 +26,20 @@ const _suggestions = [
   'Help me sleep better',
 ];
 
+/// Shown on an empty conversation. App-only: it is never stored or sent to
+/// the model.
+const _greeting = ChatMessage(
+  role: 'ai',
+  text:
+      "Hello! I'm your AfyaSmart health assistant. "
+      'How can I help you today?',
+);
+
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
 
-  List<ChatMessage> _messages = [
-    const ChatMessage(
-      role: 'ai',
-      text:
-          "Hello! I'm your AfyaSmart health assistant. "
-          'How can I help you today?',
-    ),
-  ];
+  List<ChatMessage> _messages = [_greeting];
 
   bool _sending = false;
   bool _historyLoaded = false;
@@ -163,6 +165,47 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } finally {
       if (mounted) setState(() => _sending = false);
       _scrollToBottom();
+    }
+  }
+
+  Future<void> _startNewChat() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Start a new chat?'),
+        content: const Text(
+          'This clears the current conversation, and the assistant will no '
+          'longer remember it. Your free chat count stays the same.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.brand),
+            child: const Text('New chat'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await ref.read(chatServiceProvider).startNewChat();
+      if (!mounted) return;
+      _input.clear();
+      setState(() => _messages = [_greeting]);
+    } on Exception {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Could not start a new chat. Please try again.'),
+          ),
+        );
     }
   }
 
@@ -322,6 +365,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ],
               ),
             ),
+            // Nothing to clear on a fresh conversation, and clearing
+            // mid-reply would race the server saving that exchange.
+            if (_messages.length > 1 && !_sending)
+              IconButton(
+                onPressed: _startNewChat,
+                tooltip: 'New chat',
+                icon: const Icon(Icons.add_comment_outlined, size: 22),
+                color: AppPalette.textMuted,
+              ),
             if (!subscribed)
               remaining == 0
                   ? TextButton(
