@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -63,6 +64,16 @@ class TabShell extends ConsumerWidget {
 
     final location = GoRouterState.of(context).matchedLocation;
 
+    final scaffold = Scaffold(
+      body: child,
+      // The bar hides itself with the keyboard, matching tabBarHideOnKeyboard.
+      bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
+          ? null
+          : _Bar(items: items, location: location),
+    );
+
+    if (kIsWeb) return scaffold;
+
     return PopScope(
       canPop: location == Routes.home,
       onPopInvokedWithResult: (didPop, _) {
@@ -71,13 +82,7 @@ class TabShell extends ConsumerWidget {
           context.go(Routes.home);
         }
       },
-      child: Scaffold(
-        body: child,
-        // The bar hides itself with the keyboard, matching tabBarHideOnKeyboard.
-        bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
-            ? null
-            : _Bar(items: items, location: location),
-      ),
+      child: scaffold,
     );
   }
 }

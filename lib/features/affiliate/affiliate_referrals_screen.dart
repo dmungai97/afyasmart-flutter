@@ -63,6 +63,7 @@ class _AffiliateReferralsScreenState
                 ref.read(affiliateControllerProvider.notifier).reload(),
             child: referrals.isEmpty
                 ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
                     children: const [
                       AffiliateEmpty(
                         icon: '👥',
@@ -73,6 +74,7 @@ class _AffiliateReferralsScreenState
                     ],
                   )
                 : ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
                     itemCount: referrals.length,
                     itemBuilder: (_, i) {

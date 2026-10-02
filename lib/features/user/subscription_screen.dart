@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -531,28 +532,20 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
     final user = ref.watch(currentUserProvider);
     final activePlan = user?.isSubscribed == true ? user!.effectivePlan : 'free';
 
-    return PopScope(
-      canPop: context.canPop(),
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        if (context.mounted) {
-          context.go(Routes.home);
-        }
-      },
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF5F7FA),
-        body: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            Container(
-              width: double.infinity,
-              color: AppColors.brand,
-              padding: EdgeInsets.fromLTRB(
-                16,
-                MediaQuery.viewPaddingOf(context).top + 12,
-                24,
-                24,
-              ),
+    final scaffold = Scaffold(
+      backgroundColor: const Color(0xFFF5F7FA),
+      body: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          Container(
+            width: double.infinity,
+            color: AppColors.brand,
+            padding: EdgeInsets.fromLTRB(
+              16,
+              MediaQuery.viewPaddingOf(context).top + 12,
+              24,
+              24,
+            ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -596,7 +589,19 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
             ),
           ],
         ),
-      ),
+    );
+
+    if (kIsWeb) return scaffold;
+
+    return PopScope(
+      canPop: context.canPop(),
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (context.mounted) {
+          context.go(Routes.home);
+        }
+      },
+      child: scaffold,
     );
   }
 

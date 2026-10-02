@@ -1,15 +1,21 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart' hide Position;
 import 'package:http/http.dart' as http;
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' hide Size;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../models/catalogue.dart';
 import '../../services/seed_catalogue.dart';
+
+/// Mapbox public token, from --dart-define=ACCESS_TOKEN=pk.... Not defaulted
+/// in source: GitHub push protection rejects Mapbox tokens in the repo.
+const String _mapboxAccessToken = String.fromEnvironment('ACCESS_TOKEN');
 
 /// Port of src/user/screens/MapScreen.tsx.
 class MapScreen extends ConsumerStatefulWidget {
@@ -68,7 +74,8 @@ const _defaultLocation = (lat: -1.286389, lng: 36.817223);
 const _filters = ['Care', 'Pharmacies', 'Doctors', 'Hospitals', 'Clinics', 'All'];
 
 class _MapScreenState extends ConsumerState<MapScreen> {
-  GoogleMapController? _controller;
+  MapboxMap? _mapboxMap;
+  PointAnnotationManager? _pointAnnotationManager;
 
   List<Centre> _centres = const [];
   Centre? _selected;
@@ -77,22 +84,28 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _loading = true;
   bool _permissionDenied = false;
   bool _listView = false;
+  bool _useMapbox = true;
+  bool _isSearchingArea = false;
   String _activeFilter = 'Care';
 
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb) {
+      MapboxOptions.setAccessToken(_mapboxAccessToken);
+    }
     _bootstrap();
   }
 
   @override
   void dispose() {
-    _controller?.dispose();
+    _mapboxMap = null;
     super.dispose();
   }
 
   Future<void> _bootstrap() async {
     var coords = _defaultLocation;
+    bool isGranted = false;
 
     try {
       var permission = await Geolocator.checkPermission();
@@ -100,24 +113,45 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         permission = await Geolocator.requestPermission();
       }
 
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        _permissionDenied = true;
-      } else {
-        final position = await Geolocator.getCurrentPosition();
-        coords = (lat: position.latitude, lng: position.longitude);
-      }
-    } on Exception {
+      isGranted = permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always;
+      _permissionDenied = !isGranted;
+    } catch (e) {
+      debugPrint('Location permission check notice: $e');
       _permissionDenied = true;
     }
 
-    // The seeded list is always loaded — it is free for everyone and is what
-    // makes this screen useful without a subscription. OSM results are a
-    // bonus layered on top when the network cooperates.
-    final seeded = await _seededCentres();
-    final live = _permissionDenied ? <Centre>[] : await _nominatimCentres(coords);
+    // Step 1: Render facilities immediately (Instant startup < 100ms)
+    await _fetchAndMergeFacilities(coords);
 
-    final merged = _merge(live, seeded)
+    // Step 2: Acquire high-accuracy live GPS in background without blocking screen render
+    if (isGranted) {
+      _acquireLiveGpsInBackground();
+    }
+  }
+
+  Future<void> _acquireLiveGpsInBackground() async {
+    try {
+      final position = await Geolocator.getCurrentPosition().timeout(
+        const Duration(seconds: 4),
+      );
+      final liveCoords = (lat: position.latitude, lng: position.longitude);
+      if (mounted &&
+          (liveCoords.lat != _location.lat ||
+              liveCoords.lng != _location.lng)) {
+        await _fetchAndMergeFacilities(liveCoords);
+      }
+    } catch (e) {
+      debugPrint('Background GPS acquire notice: $e');
+    }
+  }
+
+  Future<void> _fetchAndMergeFacilities(({double lat, double lng}) coords) async {
+    final seeded = await _seededCentres();
+    final dbCentres = await _supabaseCentres();
+    final live = _permissionDenied ? <Centre>[] : await _mapboxCentres(coords);
+
+    final merged = _merge(live, [...dbCentres, ...seeded])
         .map(
           (c) => c.withDistance(
             double.parse(
@@ -133,16 +167,72 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _location = coords;
       _centres = merged;
       _loading = false;
+      _isSearchingArea = false;
     });
+
+    _updateMapAnnotations();
+  }
+
+  Future<List<Centre>> _supabaseCentres() async {
+    try {
+      final centres = <Centre>[];
+
+      // Query Supabase pharmacies
+      final ph = await supabase.from('pharmacies').select();
+      for (final p in ph) {
+        final lat = (p['latitude'] as num?)?.toDouble() ?? 0.0;
+        final lng = (p['longitude'] as num?)?.toDouble() ?? 0.0;
+        if (lat != 0.0 && lng != 0.0) {
+          centres.add(
+            Centre(
+              id: 'db-pharmacy-${p['id']}',
+              name: p['name'] as String? ?? 'Pharmacy',
+              type: CentreType.pharmacy,
+              lat: lat,
+              lng: lng,
+              open: p['open'] as bool? ?? true,
+              hours: p['opening_hours'] as String? ?? 'Hours vary',
+            ),
+          );
+        }
+      }
+
+      // Query Supabase doctors
+      final docs = await supabase.from('doctors').select();
+      for (final d in docs) {
+        final lat = (d['latitude'] as num?)?.toDouble() ?? 0.0;
+        final lng = (d['longitude'] as num?)?.toDouble() ?? 0.0;
+        if (lat != 0.0 && lng != 0.0) {
+          centres.add(
+            Centre(
+              id: 'db-doctor-${d['id']}',
+              name: d['name'] as String? ?? 'Doctor',
+              type: CentreType.doctor,
+              lat: lat,
+              lng: lng,
+              open: d['available'] as bool? ?? true,
+              hours: d['availability'] as String? ?? 'Availability varies',
+            ),
+          );
+        }
+      }
+      return centres;
+    } catch (e) {
+      debugPrint('Supabase fetch notice: $e');
+      return const [];
+    }
   }
 
   Future<List<Centre>> _seededCentres() async {
     final doctors = await SeedCatalogue.doctors();
     final pharmacies = await SeedCatalogue.pharmacies();
 
-    return [
-      for (final d in doctors)
-        if (d.latitude != 0 && d.longitude != 0)
+    final centres = <Centre>[];
+    final seenHospitals = <String>{};
+
+    for (final d in doctors) {
+      if (d.latitude != 0 && d.longitude != 0) {
+        centres.add(
           Centre(
             id: 'doctor-${d.id}',
             name: d.name,
@@ -154,8 +244,36 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 ? 'Availability varies'
                 : d.availability,
           ),
-      for (final p in pharmacies)
-        if (p.latitude != 0 && p.longitude != 0)
+        );
+
+        if (d.hospital.isNotEmpty) {
+          final hospKey = d.hospital.toLowerCase().trim();
+          if (seenHospitals.add(hospKey)) {
+            final isHospital = hospKey.contains('hospital');
+            final isClinic = !isHospital ||
+                hospKey.contains('clinic') ||
+                hospKey.contains('dispensary') ||
+                hospKey.contains('medical centre') ||
+                hospKey.contains('medical center');
+            centres.add(
+              Centre(
+                id: 'hospital-${d.id}',
+                name: d.hospital,
+                type: isClinic ? CentreType.clinic : CentreType.hospital,
+                lat: d.latitude,
+                lng: d.longitude,
+                open: true,
+                hours: '24/7 Care',
+              ),
+            );
+          }
+        }
+      }
+    }
+
+    for (final p in pharmacies) {
+      if (p.latitude != 0 && p.longitude != 0) {
+        centres.add(
           Centre(
             id: 'pharmacy-${p.id}',
             name: p.name,
@@ -165,65 +283,99 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             open: p.open,
             hours: p.openingHours.isEmpty ? 'Hours vary' : p.openingHours,
           ),
-    ];
+        );
+      }
+    }
+
+    return centres;
   }
 
-  /// Nominatim (OpenStreetMap) lookup for nearby facilities. Best-effort: any
-  /// failure just means the seeded list stands alone.
-  Future<List<Centre>> _nominatimCentres(({double lat, double lng}) coords) async {
+  Future<List<Centre>> _mapboxCentres(({double lat, double lng}) coords) async {
+    if (!_useMapbox || _mapboxAccessToken.isEmpty) return const [];
+
     try {
-      const delta = 0.12;
-      final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
-        'format': 'json',
-        'q': 'hospital clinic pharmacy',
-        'limit': '40',
-        'bounded': '1',
-        'viewbox': [
-          coords.lng - delta,
-          coords.lat + delta,
-          coords.lng + delta,
-          coords.lat - delta,
-        ].join(','),
-      });
+      final queries = ['clinic', 'hospital', 'pharmacy'];
+      final results = <Centre>[];
 
-      final response = await http
-          .get(uri, headers: {'User-Agent': 'AfyaSmart/1.0'})
-          .timeout(const Duration(seconds: 8));
+      for (final q in queries) {
+        final uri = Uri.https(
+          'api.mapbox.com',
+          '/geocoding/v5/mapbox.places/$q.json',
+          {
+            'access_token': _mapboxAccessToken,
+            'proximity': '${coords.lng},${coords.lat}',
+            'country': 'KE',
+            'types': 'poi',
+            'limit': '15',
+          },
+        );
 
-      if (response.statusCode != 200) return const [];
+        final response = await http.get(uri).timeout(const Duration(seconds: 5));
+        if (response.statusCode == 401 || response.statusCode == 403) {
+          _useMapbox = false;
+          break;
+        }
+        if (response.statusCode != 200) continue;
 
-      final rows = jsonDecode(response.body) as List;
-      return [
-        for (final row in rows)
-          if (row case final Map<String, dynamic> r)
-            if (double.tryParse('${r['lat']}') case final lat?)
-              if (double.tryParse('${r['lon']}') case final lng?)
+        final data = jsonDecode(response.body);
+        if (data case {'features': final List features}) {
+          for (final item in features) {
+            if (item case {
+              'id': final String id,
+              'text': final String name,
+              'center': [final num lngNum, final num latNum],
+            }) {
+              final placeName = '${item['place_name'] ?? ''}';
+              results.add(
                 Centre(
-                  id: 'osm-${r['place_id']}',
-                  name: (r['display_name'] as String?)?.split(',').first ?? 'Health centre',
-                  type: _typeFromName('${r['display_name']}'),
-                  lat: lat,
-                  lng: lng,
+                  id: 'mapbox-$id',
+                  name: name,
+                  type: _typeFromName(
+                    '$name $placeName',
+                    fallback: _typeFromQuery(q),
+                  ),
+                  lat: latNum.toDouble(),
+                  lng: lngNum.toDouble(),
                   open: true,
                   hours: 'Hours unknown',
                 ),
-      ];
-    } on Exception {
+              );
+            }
+          }
+        }
+      }
+
+      return results;
+    } catch (_) {
+      _useMapbox = false;
       return const [];
     }
   }
 
-  CentreType _typeFromName(String name) {
+  CentreType _typeFromQuery(String query) {
+    if (query == 'pharmacy') return CentreType.pharmacy;
+    if (query == 'clinic') return CentreType.clinic;
+    return CentreType.hospital;
+  }
+
+  CentreType _typeFromName(
+    String name, {
+    CentreType fallback = CentreType.hospital,
+  }) {
     final lower = name.toLowerCase();
     if (lower.contains('pharmac') || lower.contains('chemist')) {
       return CentreType.pharmacy;
     }
     if (lower.contains('clinic')) return CentreType.clinic;
-    return CentreType.hospital;
+    if (lower.contains('hospital') ||
+        lower.contains('dispensary') ||
+        lower.contains('health centre') ||
+        lower.contains('health center')) {
+      return CentreType.hospital;
+    }
+    return fallback;
   }
 
-  /// Drops duplicates between the live and seeded lists by name + rounded
-  /// position, keeping the live entry.
   List<Centre> _merge(List<Centre> primary, List<Centre> fallback) {
     final seen = <String>{};
     return [
@@ -260,12 +412,39 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return count;
   }
 
-  double _hueFor(CentreType type) => switch (type) {
-    CentreType.hospital => BitmapDescriptor.hueRed,
-    CentreType.clinic => BitmapDescriptor.hueOrange,
-    CentreType.pharmacy => BitmapDescriptor.hueGreen,
-    CentreType.doctor => BitmapDescriptor.hueAzure,
-  };
+  Future<void> _updateMapAnnotations() async {
+    if (kIsWeb) return;
+    final manager = _pointAnnotationManager;
+    if (manager == null) return;
+
+    await manager.deleteAll();
+    final items = _filtered;
+
+    for (final c in items) {
+      final options = PointAnnotationOptions(
+        geometry: Point(coordinates: Position(c.lng, c.lat)),
+        iconImage: 'marker-15',
+        iconSize: 1.5,
+        textField: c.name,
+        textSize: 11.0,
+        textOffset: [0.0, 1.2],
+      );
+      await manager.create(options);
+    }
+  }
+
+  Future<void> _refreshCurrentGpsLocation() async {
+    setState(() => _isSearchingArea = true);
+    try {
+      final position = await Geolocator.getCurrentPosition().timeout(
+        const Duration(seconds: 6),
+      );
+      final coords = (lat: position.latitude, lng: position.longitude);
+      await _fetchAndMergeFacilities(coords);
+    } catch (_) {
+      setState(() => _isSearchingArea = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -288,25 +467,35 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
     }
 
-    return Container(
-      color: const Color(0xFFF5F7FA),
-      child: Column(
-        children: [
-          _header(),
-          _filterRow(),
-          if (_permissionDenied) _permissionNotice(),
-          Expanded(child: _listView ? _list() : _map()),
-        ],
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 768;
+
+        return Container(
+          color: const Color(0xFFF5F7FA),
+          child: Column(
+            children: [
+              _header(isWide: isWide),
+              if (!isWide) _filterRow(),
+              if (_permissionDenied) _permissionNotice(),
+              Expanded(
+                child: isWide
+                    ? _wideLayout()
+                    : (_listView ? _list() : _map(isWide: false)),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
-  Widget _header() => Container(
+  Widget _header({required bool isWide}) => Container(
     color: AppColors.brand,
     padding: EdgeInsets.fromLTRB(
-      20,
+      isWide ? 24 : 20,
       MediaQuery.viewPaddingOf(context).top + 14,
-      12,
+      isWide ? 24 : 12,
       12,
     ),
     child: Row(
@@ -330,14 +519,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ],
           ),
         ),
-        IconButton(
-          onPressed: () => setState(() => _listView = !_listView),
-          icon: Icon(
-            _listView ? Icons.map_outlined : Icons.list,
-            color: Colors.white,
+        if (!isWide)
+          IconButton(
+            onPressed: () => setState(() => _listView = !_listView),
+            icon: Icon(
+              _listView ? Icons.map_outlined : Icons.list,
+              color: Colors.white,
+            ),
+            tooltip: _listView ? 'Map view' : 'List view',
           ),
-          tooltip: _listView ? 'Map view' : 'List view',
-        ),
       ],
     ),
   );
@@ -354,7 +544,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             child: ChoiceChip(
               label: Text('$f (${_countFor(f)})'),
               selected: _activeFilter == f,
-              onSelected: (_) => setState(() => _activeFilter = f),
+              onSelected: (_) {
+                setState(() => _activeFilter = f);
+                _updateMapAnnotations();
+              },
               selectedColor: AppColors.brand,
               backgroundColor: Colors.white,
               side: const BorderSide(color: AppPalette.hairline),
@@ -370,56 +563,358 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     ),
   );
 
-  Widget _permissionNotice() => Container(
-    margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    decoration: BoxDecoration(
-      color: AppPalette.orangeBg,
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: const Row(
-      children: [
-        Icon(Icons.info_outline, size: 15, color: AppPalette.orange),
-        SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            'Location is off, so distances are measured from Nairobi.',
-            style: TextStyle(fontSize: 11, color: AppPalette.orange),
+  Widget _permissionNotice() => InkWell(
+    onTap: () {
+      setState(() {
+        _loading = true;
+        _permissionDenied = false;
+      });
+      _bootstrap();
+    },
+    borderRadius: BorderRadius.circular(10),
+    child: Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppPalette.orangeBg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.info_outline, size: 15, color: AppPalette.orange),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Location is off, so distances are measured from Nairobi. Tap to update.',
+              style: TextStyle(fontSize: 11, color: AppPalette.orange),
+            ),
           ),
-        ),
-      ],
+          Icon(Icons.refresh_outlined, size: 14, color: AppPalette.orange),
+        ],
+      ),
     ),
   );
 
-  Widget _map() => Stack(
-    children: [
-      GoogleMap(
-        initialCameraPosition: CameraPosition(
-          target: LatLng(_location.lat, _location.lng),
-          zoom: 12,
+  Widget _wideLayout() {
+    return Row(
+      children: [
+        SizedBox(
+          width: 360,
+          child: Column(
+            children: [
+              _filterRow(),
+              Expanded(child: _list()),
+            ],
+          ),
         ),
-        onMapCreated: (c) => _controller = c,
-        myLocationEnabled: !_permissionDenied,
-        myLocationButtonEnabled: !_permissionDenied,
-        markers: {
-          for (final c in _filtered)
-            Marker(
-              markerId: MarkerId(c.id),
-              position: LatLng(c.lat, c.lng),
-              icon: BitmapDescriptor.defaultMarkerWithHue(_hueFor(c.type)),
-              onTap: () => setState(() => _selected = c),
+        const VerticalDivider(width: 1, color: AppPalette.hairline),
+        Expanded(
+          child: _map(isWide: true),
+        ),
+      ],
+    );
+  }
+
+  String _mapboxStaticMapUrl() {
+    final centerLng = _selected?.lng ?? _location.lng;
+    final centerLat = _selected?.lat ?? _location.lat;
+    final zoom = _selected != null ? 14.0 : 12.5;
+
+    final pins = <String>[];
+
+    pins.add('pin-s+007bff(${_location.lng},${_location.lat})');
+
+    for (final c in _filtered.take(15)) {
+      final color = switch (c.type) {
+        CentreType.hospital => 'e53e3e',
+        CentreType.clinic => 'dd6b20',
+        CentreType.pharmacy => '38a169',
+        CentreType.doctor => '3182ce',
+      };
+      final pinType = (_selected?.id == c.id) ? 'pin-l' : 'pin-s';
+      pins.add('$pinType+$color(${c.lng},${c.lat})');
+    }
+
+    final overlay = pins.join(',');
+    return 'https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/$overlay/$centerLng,$centerLat,$zoom/800x500@2x?access_token=$_mapboxAccessToken';
+  }
+
+  Widget _webMapFallback(List<Centre> items) {
+    final bottomOffset = (items.isNotEmpty && _selected == null) ? 120.0 : 0.0;
+    return Container(
+      color: const Color(0xFFE2E8F0),
+      padding: EdgeInsets.only(bottom: bottomOffset),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.brand.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.location_on_outlined,
+                size: 36,
+                color: AppColors.brand,
+              ),
             ),
-        },
-      ),
-      if (_selected != null)
-        Positioned(
-          left: 16,
-          right: 16,
-          bottom: 16,
-          child: _selectedCard(_selected!),
+            const SizedBox(height: 12),
+            Text(
+              '${items.length} Health Services Found',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: AppPalette.textStrong,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Select a facility below or switch to List View',
+              style: TextStyle(
+                fontSize: 12,
+                color: AppPalette.textMuted,
+              ),
+            ),
+          ],
         ),
-    ],
-  );
+      ),
+    );
+  }
+
+  Widget _webMap({required bool isWide}) {
+    final items = _filtered;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: _useMapbox
+              ? Image.network(
+                  _mapboxStaticMapUrl(),
+                  fit: BoxFit.cover,
+                  frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                    if (wasSynchronouslyLoaded || frame != null) {
+                      return child;
+                    }
+                    return AnimatedOpacity(
+                      opacity: frame == null ? 0.0 : 1.0,
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOut,
+                      child: child,
+                    );
+                  },
+                  errorBuilder: (_, _, _) => _webMapFallback(items),
+                )
+              : _webMapFallback(items),
+        ),
+        // Search & Location Action Bar
+        Positioned(
+          top: 12,
+          left: 12,
+          right: 12,
+          child: Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.95),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: const [
+                      BoxShadow(color: Color(0x1A000000), blurRadius: 8),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.map_outlined, size: 18, color: AppColors.brand),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${items.length} health services found near you',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppPalette.textStrong,
+                          ),
+                        ),
+                      ),
+                      if (_isSearchingArea)
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.brand,
+                          ),
+                        )
+                      else
+                        InkWell(
+                          onTap: () => _fetchAndMergeFacilities(_location),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 4),
+                            child: Row(
+                              children: [
+                                Icon(Icons.refresh, size: 15, color: AppColors.brand),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Refresh',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.brand,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FloatingActionButton.small(
+                heroTag: 'myLocationWeb',
+                elevation: 3,
+                backgroundColor: Colors.white,
+                foregroundColor: AppColors.brand,
+                onPressed: _refreshCurrentGpsLocation,
+                child: const Icon(Icons.my_location, size: 18),
+              ),
+            ],
+          ),
+        ),
+        if (_selected != null)
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  child: _selectedCard(_selected!),
+                ),
+              ),
+            ),
+          )
+        else if (items.isNotEmpty && !isWide)
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: SizedBox(
+              height: 110,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: items.length,
+                itemBuilder: (_, i) {
+                  final c = items[i];
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: InkWell(
+                      onTap: () => setState(() => _selected = c),
+                      child: Container(
+                        width: 220,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppPalette.hairline),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x14000000),
+                              blurRadius: 8,
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              c.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: AppPalette.textStrong,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${c.typeLabel} · ${c.distanceKm ?? 0} km away',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppPalette.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _map({required bool isWide}) {
+    if (kIsWeb) {
+      return _webMap(isWide: isWide);
+    }
+
+    final cameraOptions = CameraOptions(
+      center: Point(coordinates: Position(_location.lng, _location.lat)),
+      zoom: 12.0,
+    );
+
+    return Stack(
+      children: [
+        MapWidget(
+          key: const ValueKey('mapboxMap'),
+          cameraOptions: cameraOptions,
+          styleUri: MapboxStyles.MAPBOX_STREETS,
+          onMapCreated: (mapboxMap) async {
+            _mapboxMap = mapboxMap;
+            _pointAnnotationManager =
+                await mapboxMap.annotations.createPointAnnotationManager();
+            _updateMapAnnotations();
+          },
+        ),
+        Positioned(
+          top: 12,
+          right: 12,
+          child: FloatingActionButton.small(
+            heroTag: 'myLocationNative',
+            elevation: 3,
+            backgroundColor: Colors.white,
+            foregroundColor: AppColors.brand,
+            onPressed: _refreshCurrentGpsLocation,
+            child: const Icon(Icons.my_location, size: 18),
+          ),
+        ),
+        if (_selected != null)
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  child: _selectedCard(_selected!),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 
   Widget _selectedCard(Centre c) => Container(
     padding: const EdgeInsets.all(16),
@@ -433,6 +928,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Row(
           children: [
@@ -495,15 +991,22 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       itemCount: items.length,
       itemBuilder: (_, i) {
         final c = items[i];
+        final isSelected = _selected?.id == c.id;
+
         return Padding(
           padding: const EdgeInsets.only(bottom: 10),
           child: Material(
-            color: Colors.white,
+            color: isSelected
+                ? AppColors.brand.withValues(alpha: 0.05)
+                : Colors.white,
             borderRadius: BorderRadius.circular(14),
             child: ListTile(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
-                side: const BorderSide(color: AppPalette.hairline),
+                side: BorderSide(
+                  color: isSelected ? AppColors.brand : AppPalette.hairline,
+                  width: isSelected ? 1.5 : 1.0,
+                ),
               ),
               leading: CircleAvatar(
                 backgroundColor: AppColors.brand.withValues(alpha: 0.1),
@@ -545,7 +1048,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   color: AppColors.brand,
                 ),
               ),
-              onTap: () => _openDirections(c),
+              onTap: () {
+                setState(() => _selected = c);
+                if (_mapboxMap != null) {
+                  _mapboxMap?.setCamera(
+                    CameraOptions(
+                      center: Point(
+                        coordinates: Position(c.lng, c.lat),
+                      ),
+                      zoom: 14.0,
+                    ),
+                  );
+                }
+              },
             ),
           ),
         );

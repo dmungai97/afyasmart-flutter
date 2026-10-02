@@ -133,35 +133,37 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
       return;
     }
 
+    ({double lat, double lng}) targetCoords = (lat: -1.286389, lng: 36.817223);
+
     try {
       var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Location permission is needed to sort by distance.'),
-          ),
-        );
-        return;
-      }
 
-      final position = await Geolocator.getCurrentPosition();
-      if (!mounted) return;
-      setState(() {
-        _coords = (lat: position.latitude, lng: position.longitude);
-        _nearMeOnly = true;
-      });
-      await _load();
-    } on Exception {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not determine your location.')),
-      );
+      final isGranted = permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always;
+
+      if (isGranted) {
+        try {
+          final position = await Geolocator.getCurrentPosition().timeout(
+            const Duration(seconds: 4),
+          );
+          targetCoords = (lat: position.latitude, lng: position.longitude);
+        } catch (_) {
+          // Keep default Nairobi coordinates for distance sorting if GPS times out
+        }
+      }
+    } catch (_) {
+      // Keep default coordinates
     }
+
+    if (!mounted) return;
+    setState(() {
+      _coords = targetCoords;
+      _nearMeOnly = true;
+    });
+    await _load();
   }
 
   Future<void> _clearFilters() async {
@@ -228,12 +230,36 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
                       onClearFilters: _hasActiveFilters ? _clearFilters : null,
                     ),
                   )
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    itemCount: _doctors.length,
-                    itemBuilder: (_, i) => _card(_doctors[i]),
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isWide = constraints.maxWidth >= 768;
+
+                      return Align(
+                        alignment: Alignment.topCenter,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 1100),
+                          child: isWide
+                              ? GridView.builder(
+                                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: 2,
+                                    mainAxisExtent: 135,
+                                    crossAxisSpacing: 12,
+                                    mainAxisSpacing: 12,
+                                  ),
+                                  itemCount: _doctors.length,
+                                  itemBuilder: (_, i) => _card(_doctors[i]),
+                                )
+                              : ListView.builder(
+                                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                                  keyboardDismissBehavior:
+                                      ScrollViewKeyboardDismissBehavior.onDrag,
+                                  itemCount: _doctors.length,
+                                  itemBuilder: (_, i) => _card(_doctors[i]),
+                                ),
+                        ),
+                      );
+                    },
                   ),
           ),
         ],
@@ -310,23 +336,23 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 48,
-          height: 48,
-          decoration: const BoxDecoration(
-            color: AppColors.brand,
-            shape: BoxShape.circle,
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: AppColors.brand.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(14),
           ),
           alignment: Alignment.center,
           child: Text(
             _initials(d.name),
             style: const TextStyle(
-              color: Colors.white,
+              color: AppColors.brand,
               fontSize: 15,
               fontWeight: FontWeight.w700,
             ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 14),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -352,23 +378,40 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
                     ),
                     decoration: BoxDecoration(
                       color: d.available
-                          ? AppPalette.greenBg
-                          : AppPalette.redBg,
+                          ? const Color(0xFFECFDF5)
+                          : const Color(0xFFFEF2F2),
                       borderRadius: BorderRadius.circular(Radii.pill),
                     ),
-                    child: Text(
-                      d.available ? 'Available' : 'Unavailable',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: d.available
-                            ? AppPalette.green
-                            : AppPalette.red,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: d.available
+                                ? const Color(0xFF059669)
+                                : const Color(0xFFEF4444),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          d.available ? 'Available' : 'Unavailable',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: d.available
+                                ? const Color(0xFF059669)
+                                : const Color(0xFFEF4444),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
+              const SizedBox(height: 2),
               Text(
                 d.specialization,
                 style: const TextStyle(
@@ -384,7 +427,7 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
                   color: AppPalette.textMuted,
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               Row(
                 children: [
                   Text(
@@ -409,19 +452,31 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
                   if (d.distanceKm != null)
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 7,
-                        vertical: 2,
+                        horizontal: 8,
+                        vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: AppPalette.hairline,
+                        color: const Color(0xFFF1F5F9),
                         borderRadius: BorderRadius.circular(Radii.pill),
                       ),
-                      child: Text(
-                        '📍 ${d.distanceKm} km',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: AppPalette.textBody,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.location_on_outlined,
+                            size: 12,
+                            color: AppColors.brand,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${d.distanceKm} km',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppPalette.textStrong,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                 ],

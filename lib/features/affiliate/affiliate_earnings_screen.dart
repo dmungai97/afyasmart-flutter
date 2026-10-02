@@ -27,6 +27,7 @@ class AffiliateEarningsScreen extends ConsumerWidget {
             onRefresh: () =>
                 ref.read(affiliateControllerProvider.notifier).reload(),
             child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 100),
               children: [
                 AffiliateCard(

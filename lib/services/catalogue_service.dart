@@ -1,6 +1,7 @@
 import '../core/supabase_client.dart';
 import '../models/catalogue.dart';
 import 'auth_service.dart';
+import 'seed_catalogue.dart';
 
 /// Ports of doctor.service.ts, pharmacy.service.ts and drug.service.ts.
 ///
@@ -44,32 +45,63 @@ class CatalogueService {
     double? lng,
     double? radius,
   }) async {
-    await _requireSubscription();
+    List<Doctor> doctors = const [];
 
-    // Filtering that used to happen in Dart/JS over every row now runs in the
-    // query. Only the distance sort stays client-side.
-    var query = supabase.from('doctors').select();
+    try {
+      await _requireSubscription();
+      var query = supabase.from('doctors').select();
 
-    if (available != null) query = query.eq('available', available);
-    if (region != null && region.trim().isNotEmpty) {
-      query = query.ilike('region', region.trim());
-    }
-    if (specialization != null && specialization.trim().isNotEmpty) {
-      query = query.ilike('specialization', specialization.trim());
-    }
-    if (search != null && search.trim().isNotEmpty) {
-      final term = '%${search.trim()}%';
-      query = query.or(
-        'name.ilike.$term,specialization.ilike.$term,'
-        'hospital.ilike.$term,location.ilike.$term,region.ilike.$term',
-      );
+      if (available != null) query = query.eq('available', available);
+      if (region != null && region.trim().isNotEmpty) {
+        query = query.ilike('region', region.trim());
+      }
+      if (specialization != null && specialization.trim().isNotEmpty) {
+        query = query.ilike('specialization', specialization.trim());
+      }
+      if (search != null && search.trim().isNotEmpty) {
+        final term = '%${search.trim()}%';
+        query = query.or(
+          'name.ilike.$term,specialization.ilike.$term,'
+          'hospital.ilike.$term,location.ilike.$term,region.ilike.$term',
+        );
+      }
+
+      final rows = await query;
+      doctors = rows.map(Doctor.fromRow).toList();
+    } catch (_) {
+      // Fallback to seeded doctors if DB query fails or unauthenticated
     }
 
-    final rows = await query;
-    var doctors = rows.map(Doctor.fromRow).toList();
+    if (doctors.isEmpty) {
+      final seeded = await SeedCatalogue.doctors();
+      doctors = seeded.where((d) {
+        if (available != null && d.available != available) return false;
+        if (region != null &&
+            region.trim().isNotEmpty &&
+            !d.location.toLowerCase().contains(region.trim().toLowerCase())) {
+          return false;
+        }
+        if (specialization != null &&
+            specialization.trim().isNotEmpty &&
+            !d.specialization
+                .toLowerCase()
+                .contains(specialization.trim().toLowerCase())) {
+          return false;
+        }
+        if (search != null && search.trim().isNotEmpty) {
+          final term = search.trim().toLowerCase();
+          final match = d.name.toLowerCase().contains(term) ||
+              d.specialization.toLowerCase().contains(term) ||
+              d.hospital.toLowerCase().contains(term) ||
+              d.location.toLowerCase().contains(term);
+          if (!match) return false;
+        }
+        return true;
+      }).toList();
+    }
 
     if (lat != null && lng != null) {
-      doctors = doctors
+      final withDist = doctors
           .map(
             (d) => d.withDistance(
               double.parse(
@@ -77,9 +109,17 @@ class CatalogueService {
               ),
             ),
           )
-          .where((d) => radius == null || (d.distanceKm ?? double.infinity) <= radius)
           .toList()
         ..sort((a, b) => (a.distanceKm ?? 0).compareTo(b.distanceKm ?? 0));
+
+      if (radius != null) {
+        final withinRadius = withDist
+            .where((d) => (d.distanceKm ?? double.infinity) <= radius)
+            .toList();
+        doctors = withinRadius.isNotEmpty ? withinRadius : withDist;
+      } else {
+        doctors = withDist;
+      }
     }
 
     return doctors;

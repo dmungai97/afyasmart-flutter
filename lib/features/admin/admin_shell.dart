@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -49,6 +50,48 @@ class AdminShell extends ConsumerWidget {
         .map((i) => i.label)
         .firstOrNull;
 
+    final scaffold = Scaffold(
+      backgroundColor: AppColors.paper,
+      appBar: AppBar(
+        title: Text(
+          title ?? 'Admin',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Back to app',
+            onPressed: () => context.go(Routes.home),
+            icon: const Icon(Icons.exit_to_app),
+          ),
+          IconButton(
+            tooltip: 'Sign out',
+            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
+      drawer: wide
+          ? null
+          : Drawer(
+              child: _nav(context, location, isDrawer: true),
+            ),
+      body: wide
+          ? Row(
+              children: [
+                SizedBox(
+                  width: 240,
+                  child: _nav(context, location, isDrawer: false),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(child: child),
+              ],
+            )
+          : child,
+    );
+
+    if (kIsWeb) return scaffold;
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -59,45 +102,7 @@ class AdminShell extends ConsumerWidget {
           context.go(Routes.home);
         }
       },
-      child: Scaffold(
-        backgroundColor: AppColors.paper,
-        appBar: AppBar(
-          title: Text(
-            title ?? 'Admin',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          actions: [
-            IconButton(
-              tooltip: 'Back to app',
-              onPressed: () => context.go(Routes.home),
-              icon: const Icon(Icons.exit_to_app),
-            ),
-            IconButton(
-              tooltip: 'Sign out',
-              onPressed: () => ref.read(authControllerProvider.notifier).logout(),
-              icon: const Icon(Icons.logout),
-            ),
-          ],
-        ),
-        drawer: wide
-            ? null
-            : Drawer(
-                child: _nav(context, location, isDrawer: true),
-              ),
-        body: wide
-            ? Row(
-                children: [
-                  SizedBox(
-                    width: 240,
-                    child: _nav(context, location, isDrawer: false),
-                  ),
-                  const VerticalDivider(width: 1),
-                  Expanded(child: child),
-                ],
-              )
-            : child,
-      ),
+      child: scaffold,
     );
   }
 
@@ -171,37 +176,37 @@ class AdminShell extends ConsumerWidget {
                     horizontal: 12,
                     vertical: 3,
                   ),
-                  decoration: BoxDecoration(
+                  child: Material(
                     color: focused
                         ? AppColors.ink.withValues(alpha: 0.08)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: ListTile(
-                    dense: true,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    leading: Icon(
-                      item.icon,
-                      size: 20,
-                      color: focused ? AppColors.ink : AppColors.inkMuted,
-                    ),
-                    title: Text(
-                      item.label,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight:
-                            focused ? FontWeight.w700 : FontWeight.w500,
+                    child: ListTile(
+                      dense: true,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      leading: Icon(
+                        item.icon,
+                        size: 20,
                         color: focused ? AppColors.ink : AppColors.inkMuted,
                       ),
+                      title: Text(
+                        item.label,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight:
+                              focused ? FontWeight.w700 : FontWeight.w500,
+                          color: focused ? AppColors.ink : AppColors.inkMuted,
+                        ),
+                      ),
+                      onTap: () {
+                        if (isDrawer) {
+                          Navigator.of(context).pop();
+                        }
+                        context.go(item.route);
+                      },
                     ),
-                    onTap: () {
-                      if (isDrawer) {
-                        Navigator.of(context).pop();
-                      }
-                      context.go(item.route);
-                    },
                   ),
                 );
               },

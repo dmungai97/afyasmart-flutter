@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/router.dart';
 import '../../core/theme.dart';
@@ -78,54 +79,7 @@ class AffiliateProfileScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 14),
-              AffiliateCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Your referral code',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: AppPalette.textStrong,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            data.code,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.2,
-                              color: AppColors.brand,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () async {
-                            await Clipboard.setData(
-                              ClipboardData(text: data.code),
-                            );
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context)
-                              ..clearSnackBars()
-                              ..showSnackBar(
-                                const SnackBar(
-                                  content: Text('Referral code copied.'),
-                                ),
-                              );
-                          },
-                          icon: const Icon(Icons.copy, size: 18),
-                          color: AppColors.brand,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+              _ShareCard(code: data.code),
               const SizedBox(height: 14),
               AffiliateCard(
                 child: Column(
@@ -194,5 +148,164 @@ class AffiliateProfileScreen extends ConsumerWidget {
         ),
       ],
     );
+  }
+}
+
+class _ShareCard extends StatelessWidget {
+  const _ShareCard({required this.code});
+
+  final String code;
+
+  @override
+  Widget build(BuildContext context) {
+    final link = 'https://afyasmart.app/register?ref=$code';
+
+    return AffiliateCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Your referral link & code',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: AppPalette.textStrong,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F7FA),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppPalette.hairline),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        code,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.2,
+                          color: AppColors.brand,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        link,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppPalette.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => _copyLink(context, link),
+                  icon: const Icon(Icons.copy, size: 18),
+                  color: AppColors.brand,
+                  tooltip: 'Copy Link',
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => _shareWhatsApp(context, link),
+                  icon: const Icon(Icons.chat_bubble_outline, size: 16),
+                  label: const Text(
+                    'Share to WhatsApp',
+                    textAlign: TextAlign.center,
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFE6F4F1),
+                    foregroundColor: const Color(0xFF006D5B),
+                    elevation: 0,
+                    minimumSize: const Size.fromHeight(46),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _copyCode(context, code),
+                  icon: const Icon(Icons.code, size: 16),
+                  label: const Text(
+                    'Copy Code',
+                    textAlign: TextAlign.center,
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppPalette.textStrong,
+                    side: const BorderSide(color: AppPalette.hairline),
+                    minimumSize: const Size.fromHeight(46),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _copyCode(BuildContext context, String code) async {
+    await Clipboard.setData(ClipboardData(text: code));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(content: Text('Referral code $code copied.')),
+      );
+  }
+
+  Future<void> _copyLink(BuildContext context, String link) async {
+    await Clipboard.setData(ClipboardData(text: link));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        const SnackBar(content: Text('Referral link copied to clipboard.')),
+      );
+  }
+
+  Future<void> _shareWhatsApp(BuildContext context, String link) async {
+    final message = Uri.encodeComponent(
+      'Join AfyaSmart for AI health insights and doctor consultations! '
+      'Register using my referral link: $link',
+    );
+    final uri = Uri.parse('https://wa.me/?text=$message');
+
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (context.mounted) {
+        await _copyLink(context, link);
+      }
+    }
   }
 }

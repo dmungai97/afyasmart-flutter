@@ -341,7 +341,7 @@ class _UserEditDialogState extends State<_UserEditDialog> {
             const SizedBox(height: 14),
             if (widget.canChangeRole)
               DropdownButtonFormField<String>(
-                value: _role,
+                initialValue: _role,
                 decoration: const InputDecoration(
                   labelText: 'Role',
                   prefixIcon: Icon(Icons.security, size: 18),
@@ -376,7 +376,7 @@ class _UserEditDialogState extends State<_UserEditDialog> {
               onChanged: (v) => setState(() => _subscribed = v),
             ),
             DropdownButtonFormField<String>(
-              value: _plan,
+              initialValue: _plan,
               decoration: const InputDecoration(
                 labelText: 'Plan',
                 prefixIcon: Icon(Icons.card_membership, size: 18),

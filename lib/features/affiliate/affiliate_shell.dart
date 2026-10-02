@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -67,6 +68,18 @@ class AffiliateShell extends ConsumerWidget {
         if (!data.enrolled) return const AffiliateEnrollScreen();
         final location = GoRouterState.of(context).matchedLocation;
 
+        final scaffold = Scaffold(
+          backgroundColor: const Color(0xFFF5F7FA),
+          body: child,
+          bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
+              ? null
+              : _AffiliateBar(
+                  location: location,
+                ),
+        );
+
+        if (kIsWeb) return scaffold;
+
         return PopScope(
           canPop: location == Routes.affiliate,
           onPopInvokedWithResult: (didPop, _) {
@@ -75,15 +88,7 @@ class AffiliateShell extends ConsumerWidget {
               context.go(Routes.affiliate);
             }
           },
-          child: Scaffold(
-            backgroundColor: const Color(0xFFF5F7FA),
-            body: child,
-            bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
-                ? null
-                : _AffiliateBar(
-                    location: location,
-                  ),
-          ),
+          child: scaffold,
         );
       },
     );
@@ -123,31 +128,25 @@ class _AffiliateBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
-    // A floating, rounded bar inset from the edges, matching the RN layout's
-    // marginHorizontal + borderRadius rather than a flush Material bar.
-    return Padding(
-      padding: EdgeInsets.fromLTRB(14, 0, 14, bottomInset > 0 ? bottomInset : 10),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: AppPalette.hairline),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x0F000000),
-              blurRadius: 12,
-              offset: Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            for (final item in _items)
-              _tab(context, item.route, item.icon, item.label),
-          ],
-        ),
+    return Container(
+      padding: EdgeInsets.only(top: 8, bottom: bottomInset > 0 ? bottomInset : 8),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: AppPalette.hairline)),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x08000000),
+            blurRadius: 10,
+            offset: Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          for (final item in _items)
+            Expanded(child: _tab(context, item.route, item.icon, item.label)),
+        ],
       ),
     );
   }
@@ -162,39 +161,45 @@ class _AffiliateBar extends StatelessWidget {
 
     return InkWell(
       onTap: focused ? null : () => context.go(route),
-      borderRadius: BorderRadius.circular(14),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 46,
-              height: 34,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: focused
-                    ? AppColors.brand.withValues(alpha: 0.12)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(
-                icon,
-                size: 21,
-                color: focused ? AppColors.brand : const Color(0xFF9AA0A6),
+      child: Stack(
+        alignment: Alignment.bottomCenter,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 24,
+                  color: focused ? AppColors.brand : const Color(0xFF9AA0A6),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: focused ? FontWeight.w700 : FontWeight.w500,
+                    color: focused ? AppColors.brand : const Color(0xFF9AA0A6),
+                  ),
+                ),
+                const SizedBox(height: 8), // Room for the indicator
+              ],
+            ),
+          ),
+          if (focused)
+            Positioned(
+              bottom: 0,
+              child: Container(
+                width: 32,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: AppColors.brand,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
-            const SizedBox(height: 1),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: focused ? AppColors.brand : const Color(0xFF9AA0A6),
-              ),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }

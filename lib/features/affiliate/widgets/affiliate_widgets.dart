@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 import '../../../core/theme.dart';
 
@@ -30,12 +29,18 @@ class AffiliateHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
-    color: AppColors.brand,
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [AppColors.brand, AppColors.accent],
+      ),
+    ),
     padding: EdgeInsets.fromLTRB(
-      20,
-      MediaQuery.viewPaddingOf(context).top + 16,
-      20,
-      18,
+      24,
+      MediaQuery.viewPaddingOf(context).top + 18,
+      24,
+      24,
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -44,15 +49,19 @@ class AffiliateHeader extends StatelessWidget {
           title,
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
           ),
         ),
         if (subtitle != null) ...[
-          const SizedBox(height: 2),
+          const SizedBox(height: 4),
           Text(
             subtitle!,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            style: const TextStyle(
+              color: Colors.white70, 
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ],
