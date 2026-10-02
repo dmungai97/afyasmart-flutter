@@ -32,6 +32,22 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _confirm = TextEditingController();
   bool _loading = false;
 
+  /// The link's code, or one remembered from an earlier visit to this screen.
+  late String? _referralCode = widget.referralCode;
+
+  @override
+  void initState() {
+    super.initState();
+    final auth = ref.read(authControllerProvider.notifier);
+    if (widget.referralCode != null) {
+      auth.rememberReferral(widget.referralCode!);
+    } else {
+      auth.pendingReferral().then((code) {
+        if (mounted && code != null) setState(() => _referralCode = code);
+      });
+    }
+  }
+
   @override
   void dispose() {
     for (final c in [_name, _email, _phone, _password, _confirm]) {
@@ -64,7 +80,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             phone: _phone.text,
             password: _password.text,
             passwordConfirmation: _confirm.text,
-            referralCode: widget.referralCode,
+            referralCode: _referralCode,
           );
       if (!mounted) return;
 
@@ -150,7 +166,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (widget.referralCode != null) _referralBanner(),
+              if (_referralCode != null) _referralBanner(),
               AuthField(
                 label: 'Full name',
                 hint: 'Jane Wanjiru',
@@ -287,7 +303,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            'Referred with code ${widget.referralCode}',
+            'Referred with code $_referralCode',
             style: const TextStyle(fontSize: 13, color: Color(0xFF2D3748)),
           ),
         ),

@@ -29,14 +29,20 @@ import '../features/user/chat_screen.dart';
 import '../features/user/diagnosis_results_screen.dart';
 import '../features/user/doctors_screen.dart';
 import '../features/user/drugs_screen.dart';
+import '../features/user/help_support_screen.dart';
 import '../features/user/home_screen.dart';
+import '../features/user/inbox_screen.dart';
 import '../features/user/map_screen.dart';
+import '../features/user/medical_history_screen.dart';
+import '../features/user/notifications_screen.dart';
 import '../features/user/payment_history_screen.dart';
 import '../features/user/personal_info_screen.dart';
 import '../features/user/pharmacy_screen.dart';
+import '../features/user/privacy_policy_screen.dart';
 import '../features/user/profile_screen.dart';
 import '../features/user/subscription_screen.dart';
 import '../features/user/symptoms_screen.dart';
+import '../features/user/terms_conditions_screen.dart';
 import '../state/auth_controller.dart';
 
 /// Port of the redirect logic in app/_layout.tsx.
@@ -68,9 +74,15 @@ abstract final class Routes {
   static const map = '/map';
   static const subscription = '/subscription';
   static const profile = '/profile';
+  static const inbox = '/inbox';
   static const personalInfo = '/profile/personal-info';
   static const changePassword = '/profile/change-password';
   static const paymentHistory = '/profile/payments';
+  static const notifications = '/profile/notifications';
+  static const medicalHistory = '/profile/medical-history';
+  static const privacyPolicy = '/profile/privacy';
+  static const termsConditions = '/profile/terms';
+  static const helpSupport = '/profile/help-support';
 
   static const admin = '/admin';
   static const adminUsers = '/admin/users';
@@ -105,9 +117,15 @@ abstract final class Routes {
     map,
     subscription,
     profile,
+    inbox,
     personalInfo,
     changePassword,
     paymentHistory,
+    notifications,
+    medicalHistory,
+    privacyPolicy,
+    termsConditions,
+    helpSupport,
   };
 
   /// Routes that require an active subscription. Note that [subscription]
@@ -123,6 +141,16 @@ abstract final class Routes {
   };
 }
 
+/// Only sign-in and sign-up links are resumed after a cold start: they are
+/// what referral and plan links point at, and every other route is reached by
+/// the redirect rules anyway. Anything else is ignored rather than trusted.
+String? _resumableLink(String? next) {
+  if (next == null) return null;
+  final uri = Uri.tryParse(next);
+  if (uri == null || !Routes.auth.contains(uri.path)) return null;
+  return uri.toString();
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: Routes.splash,
@@ -132,9 +160,20 @@ final routerProvider = Provider<GoRouter>((ref) {
     refreshListenable: _AuthListenable(ref),
     redirect: (context, goState) {
       final auth = ref.read(authControllerProvider);
-      if (auth.loading) return Routes.splash;
-
       final location = goState.matchedLocation;
+
+      // A link that cold-starts the app (afyasmart.app/register?ref=...)
+      // arrives while auth is still hydrating. Parking on a bare splash would
+      // drop it, and the referral with it, so the target rides along as
+      // ?next= and is resumed below once auth settles.
+      if (auth.loading) {
+        if (location == Routes.splash) return null;
+        return Uri(
+          path: Routes.splash,
+          queryParameters: {'next': goState.uri.toString()},
+        ).toString();
+      }
+
       final user = auth.user;
       final signedIn = user != null;
 
@@ -146,7 +185,10 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       String? result;
       if (location == Routes.splash) {
-        if (signedIn) {
+        final next = _resumableLink(goState.uri.queryParameters['next']);
+        if (!signedIn && next != null) {
+          result = next;
+        } else if (signedIn) {
           result = user.isAdmin ? Routes.admin : Routes.home;
         } else if (auth.hasCompletedOnboarding) {
           result = Routes.login;
@@ -266,6 +308,27 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Routes.paymentHistory,
         builder: (_, _) => const PaymentHistoryScreen(),
+      ),
+      GoRoute(
+        path: Routes.notifications,
+        builder: (_, _) => const NotificationsScreen(),
+      ),
+      GoRoute(path: Routes.inbox, builder: (_, _) => const InboxScreen()),
+      GoRoute(
+        path: Routes.medicalHistory,
+        builder: (_, _) => const MedicalHistoryScreen(),
+      ),
+      GoRoute(
+        path: Routes.privacyPolicy,
+        builder: (_, _) => const PrivacyPolicyScreen(),
+      ),
+      GoRoute(
+        path: Routes.termsConditions,
+        builder: (_, _) => const TermsConditionsScreen(),
+      ),
+      GoRoute(
+        path: Routes.helpSupport,
+        builder: (_, _) => const HelpSupportScreen(),
       ),
       GoRoute(
         path: Routes.subscription,

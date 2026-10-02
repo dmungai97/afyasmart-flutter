@@ -207,6 +207,20 @@ class AuthService {
     }
   }
 
+  /// Attributes a fresh Google account to the affiliate behind [code].
+  ///
+  /// Email sign-ups carry the code in signUp() metadata, but Google sign-in
+  /// cannot set metadata, so this runs straight after the first sign-in
+  /// instead. The RPC only accepts it within an hour of account creation and
+  /// before any subscription; an unknown code is a quiet `false`.
+  Future<bool> claimReferral(String code) async {
+    final claimed = await supabase.rpc(
+      'claim_referral',
+      params: {'code': code.trim().toUpperCase()},
+    );
+    return claimed == true;
+  }
+
   Future<void> logout() => supabase.auth.signOut();
 
   Future<void> requestPasswordReset(String email) async {

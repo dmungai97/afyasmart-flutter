@@ -55,6 +55,7 @@ class AuthState {
 
 class AuthController extends Notifier<AuthState> {
   static const _onboardedKey = 'hasCompletedOnboarding';
+  static const _referralKey = 'pendingReferralCode';
 
   @override
   AuthState build() {
@@ -166,7 +167,32 @@ class AuthController extends Notifier<AuthState> {
     final user = await ref
         .read(authServiceProvider)
         .login(email: email, password: password);
+    // An existing account cannot be referred, so a leftover code is spent.
+    await _forgetReferral();
     await _setSignedIn(user);
+  }
+
+  /// Holds a ?ref= code from a referral link until an account is created.
+  ///
+  /// The code arrives on the register screen, but the user may switch to
+  /// sign-in, back out, or pick Google instead of the form — each of which
+  /// used to drop it, and with it the affiliate's commission. Persisting it
+  /// means whichever way the account is eventually created, it is attributed.
+  Future<void> rememberReferral(String code) async {
+    final trimmed = code.trim();
+    if (trimmed.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_referralKey, trimmed.toUpperCase());
+  }
+
+  Future<String?> pendingReferral() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_referralKey);
+  }
+
+  Future<void> _forgetReferral() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_referralKey);
   }
 
   Future<void> register({
@@ -185,8 +211,9 @@ class AuthController extends Notifier<AuthState> {
           phone: phone,
           password: password,
           passwordConfirmation: passwordConfirmation,
-          referralCode: referralCode,
+          referralCode: referralCode ?? await pendingReferral(),
         );
+    await _forgetReferral();
     await _setSignedIn(user, isNew: true);
   }
 
@@ -194,9 +221,22 @@ class AuthController extends Notifier<AuthState> {
     required String idToken,
     String? accessToken,
   }) async {
-    final result = await ref
-        .read(authServiceProvider)
-        .signInWithGoogle(idToken: idToken, accessToken: accessToken);
+    final service = ref.read(authServiceProvider);
+    final result = await service.signInWithGoogle(
+      idToken: idToken,
+      accessToken: accessToken,
+    );
+
+    final code = await pendingReferral();
+    if (result.isNewUser && code != null) {
+      try {
+        await service.claimReferral(code);
+      } on Exception {
+        // Attribution must never block sign-in.
+      }
+    }
+    await _forgetReferral();
+
     await _setSignedIn(result.user, isNew: result.isNewUser);
   }
 
@@ -228,6 +268,12 @@ class AuthController extends Notifier<AuthState> {
       ref.read(authServiceProvider).requestPasswordReset(email);
 
   Future<void> logout() async {
+    try {
+      // Before signOut: unlinking the device needs the session.
+      await ref.read(pushServiceProvider).unregisterForUser();
+    } on Object {
+      // A stale token is cleaned up by the push function on its next send.
+    }
     try {
       await ref.read(authServiceProvider).logout();
     } on Exception {

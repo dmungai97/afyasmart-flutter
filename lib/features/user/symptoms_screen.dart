@@ -148,10 +148,11 @@ class _SymptomsScreenState extends ConsumerState<SymptomsScreen> {
       if (!mounted) return;
 
       // Stored so the result survives if they subscribe and come back — the
-      // diagnosis-results screen reads the same store.
+      // diagnosis-results screen reads the same store — and added to the
+      // account's medical history.
       await ref
           .read(diagnosisControllerProvider.notifier)
-          .setPendingDiagnosis(
+          .recordDiagnosis(
             PendingDiagnosis(
               symptoms: _selected.join(', '),
               summary: analysis.urgencyDesc,

@@ -6,6 +6,7 @@ import '../../core/router.dart';
 import '../../core/theme.dart';
 import '../../models/app_user.dart';
 import '../../state/auth_controller.dart';
+import '../../state/notifications_controller.dart';
 
 /// Port of src/user/screens/HomeScreen.tsx.
 class HomeScreen extends ConsumerWidget {
@@ -122,20 +123,7 @@ class HomeScreen extends ConsumerWidget {
               ],
             ),
           ),
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              border: Border.all(color: AppPalette.hairline),
-            ),
-            child: const Icon(
-              Icons.notifications_none,
-              size: 22,
-              color: AppPalette.teal,
-            ),
-          ),
+          const _InboxBell(),
         ],
       ),
     );
@@ -439,4 +427,40 @@ class HomeScreen extends ConsumerWidget {
       ],
     ),
   );
+}
+
+class _InboxBell extends ConsumerWidget {
+  const _InboxBell();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final unread = ref.watch(unreadNotificationsProvider);
+
+    return Semantics(
+      button: true,
+      label: unread == 0 ? 'Notifications' : 'Notifications, $unread unread',
+      child: GestureDetector(
+        onTap: () => context.push(Routes.inbox),
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+            border: Border.all(color: AppPalette.hairline),
+          ),
+          child: Badge(
+            isLabelVisible: unread > 0,
+            label: Text(unread > 9 ? '9+' : '$unread'),
+            backgroundColor: AppPalette.alert,
+            child: Icon(
+              unread > 0 ? Icons.notifications : Icons.notifications_none,
+              size: 22,
+              color: AppPalette.teal,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

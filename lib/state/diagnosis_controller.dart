@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/symptoms_service.dart';
+import 'auth_controller.dart';
+import 'providers.dart';
 
 /// Port of src/store/diagnosisStore.ts.
 ///
@@ -279,6 +281,22 @@ class DiagnosisController extends Notifier<DiagnosisState> {
     await _persist();
   }
 
+  /// A signed-in symptom check: becomes the latest result shown on the
+  /// diagnosis-results screen and is added to the account's history.
+  ///
+  /// The history write is best-effort. The result is already on screen and
+  /// stored locally, so a failed insert must not turn a successful analysis
+  /// into an error.
+  Future<void> recordDiagnosis(PendingDiagnosis diagnosis) async {
+    await setPendingDiagnosis(diagnosis);
+    try {
+      await ref.read(diagnosisHistoryServiceProvider).save(diagnosis.toJson());
+      ref.invalidate(diagnosisHistoryProvider);
+    } on Exception {
+      // See above.
+    }
+  }
+
   Future<void> clearPendingAnalysisRequest() async {
     state = DiagnosisState(
       hydrated: true,
@@ -308,6 +326,16 @@ final diagnosisControllerProvider =
     NotifierProvider<DiagnosisController, DiagnosisState>(
       DiagnosisController.new,
     );
+
+/// The signed-in user's past symptom checks, newest first. Keyed on the user
+/// id so signing in as someone else never shows the previous account's rows.
+final diagnosisHistoryProvider = FutureProvider<List<PendingDiagnosis>>((ref) async {
+  final userId = ref.watch(authControllerProvider.select((s) => s.user?.id));
+  if (userId == null) return const [];
+
+  final rows = await ref.read(diagnosisHistoryServiceProvider).list();
+  return rows.map(PendingDiagnosis.fromJson).toList();
+});
 
 /// Maps the health-check answers onto the fields the analysis endpoint wants.
 /// Ported from the lookup tables at the top of SymptomChatScreen.tsx.
