@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -65,6 +66,61 @@ class Centre {
     CentreType.pharmacy => 'Pharmacy',
     CentreType.doctor => 'Doctor',
   };
+
+  /// Marker colour as 0xRRGGBB, shared by the native pins and the web
+  /// static map so both read the same.
+  int get pinColor => switch (type) {
+    CentreType.hospital => 0xE53E3E,
+    CentreType.clinic => 0xDD6B20,
+    CentreType.pharmacy => 0x38A169,
+    CentreType.doctor => 0x3182CE,
+  };
+}
+
+/// Draws a map pin as PNG bytes for a PointAnnotation.
+///
+/// The RN app used the `marker-15` sprite, but that Maki icon is not in the
+/// Streets v12 style's sprite sheet, so it rendered as a bare black marker.
+/// Drawing the pin ourselves removes the dependency on the style's sprites.
+/// [pixelRatio] keeps it crisp: Mapbox shows the bitmap at its pixel size
+/// divided by the screen density.
+Future<Uint8List> _drawPin(int rgb, double pixelRatio) async {
+  const width = 28.0;
+  const height = 38.0;
+  const cx = width / 2;
+  const cy = 13.0;
+  const r = 11.0;
+  const tipY = height - 1.5;
+
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder)..scale(pixelRatio);
+
+  final pin = Path()
+    ..moveTo(cx, tipY)
+    ..cubicTo(cx - r * 0.4, tipY - r * 0.9, cx - r, cy + r * 0.6, cx - r, cy)
+    ..arcToPoint(const Offset(cx + r, cy), radius: const Radius.circular(r))
+    ..cubicTo(cx + r, cy + r * 0.6, cx + r * 0.4, tipY - r * 0.9, cx, tipY)
+    ..close();
+
+  canvas
+    ..drawShadow(pin, Colors.black, 1.5, false)
+    ..drawPath(pin, Paint()..color = Color(0xFF000000 | rgb))
+    ..drawPath(
+      pin,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    )
+    ..drawCircle(const Offset(cx, cy), r * 0.4, Paint()..color = Colors.white);
+
+  final image = await recorder.endRecording().toImage(
+    (width * pixelRatio).ceil(),
+    (height * pixelRatio).ceil(),
+  );
+  final png = await image.toByteData(format: ui.ImageByteFormat.png);
+  image.dispose();
+  return png!.buffer.asUint8List();
 }
 
 /// Nairobi. Used when location permission is refused, so the map still shows
@@ -76,6 +132,9 @@ const _filters = ['Care', 'Pharmacies', 'Doctors', 'Hospitals', 'Clinics', 'All'
 class _MapScreenState extends ConsumerState<MapScreen> {
   MapboxMap? _mapboxMap;
   PointAnnotationManager? _pointAnnotationManager;
+
+  /// One pin bitmap per colour, drawn on first use.
+  final Map<int, Uint8List> _pinImages = {};
 
   List<Centre> _centres = const [];
   Centre? _selected;
@@ -417,20 +476,30 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final manager = _pointAnnotationManager;
     if (manager == null) return;
 
-    await manager.deleteAll();
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     final items = _filtered;
+    final options = <PointAnnotationOptions>[];
 
     for (final c in items) {
-      final options = PointAnnotationOptions(
-        geometry: Point(coordinates: Position(c.lng, c.lat)),
-        iconImage: 'marker-15',
-        iconSize: 1.5,
-        textField: c.name,
-        textSize: 11.0,
-        textOffset: [0.0, 1.2],
+      final image = _pinImages[c.pinColor] ??=
+          await _drawPin(c.pinColor, pixelRatio);
+      options.add(
+        PointAnnotationOptions(
+          geometry: Point(coordinates: Position(c.lng, c.lat)),
+          image: image,
+          iconAnchor: IconAnchor.BOTTOM,
+          textField: c.name,
+          textSize: 11.0,
+          textOffset: [0.0, 0.4],
+          textAnchor: TextAnchor.TOP,
+          textHaloColor: Colors.white.toARGB32(),
+          textHaloWidth: 1.2,
+        ),
       );
-      await manager.create(options);
     }
+
+    await manager.deleteAll();
+    await manager.createMulti(options);
   }
 
   Future<void> _refreshCurrentGpsLocation() async {
@@ -625,12 +694,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     pins.add('pin-s+007bff(${_location.lng},${_location.lat})');
 
     for (final c in _filtered.take(15)) {
-      final color = switch (c.type) {
-        CentreType.hospital => 'e53e3e',
-        CentreType.clinic => 'dd6b20',
-        CentreType.pharmacy => '38a169',
-        CentreType.doctor => '3182ce',
-      };
+      final color = c.pinColor.toRadixString(16).padLeft(6, '0');
       final pinType = (_selected?.id == c.id) ? 'pin-l' : 'pin-s';
       pins.add('$pinType+$color(${c.lng},${c.lat})');
     }
