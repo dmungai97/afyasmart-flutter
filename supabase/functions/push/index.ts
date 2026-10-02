@@ -30,6 +30,30 @@ function env(name: string): string {
   return value;
 }
 
+// FCM_SERVICE_ACCOUNT may be the JSON itself or the JSON base64-encoded.
+// Base64 exists because Windows PowerShell 5.1 strips the double quotes from
+// the JSON when passing it to `supabase secrets set`, leaving it unparseable.
+function serviceAccount(): ServiceAccount {
+  const raw = env("FCM_SERVICE_ACCOUNT").trim();
+  const text = raw.startsWith("{") ? raw : new TextDecoder().decode(
+    Uint8Array.from(atob(raw), (c) => c.charCodeAt(0)),
+  );
+
+  let sa: ServiceAccount;
+  try {
+    sa = JSON.parse(text);
+  } catch {
+    // Never echo the value: it holds a private key.
+    throw new Error(
+      "FCM_SERVICE_ACCOUNT is not valid JSON (or base64 of it). Re-set it base64-encoded.",
+    );
+  }
+  if (!sa.project_id || !sa.client_email || !sa.private_key) {
+    throw new Error("FCM_SERVICE_ACCOUNT is missing project_id, client_email or private_key.");
+  }
+  return sa;
+}
+
 // Constant-time compare, so the secret cannot be recovered by timing.
 function safeEqual(a: string, b: string): boolean {
   const ea = new TextEncoder().encode(a);
@@ -91,7 +115,19 @@ async function googleAccessToken(sa: ServiceAccount): Promise<string> {
   return cachedToken.value;
 }
 
+// Errors are returned in the body (pg_net stores it in net._http_response),
+// so a failed push can be diagnosed from SQL rather than only from logs.
 Deno.serve(async (req) => {
+  try {
+    return await handle(req);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`push failed: ${message}`);
+    return json({ status: "error", message }, 500);
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method !== "POST") return json({ status: "error", message: "Method not allowed" }, 405);
 
   if (!safeEqual(req.headers.get("x-push-secret") ?? "", env("PUSH_WEBHOOK_SECRET"))) {
@@ -130,7 +166,7 @@ Deno.serve(async (req) => {
   if (deviceError) throw new Error(deviceError.message);
   if (!devices?.length) return json({ status: "skipped", reason: "no devices" });
 
-  const sa: ServiceAccount = JSON.parse(env("FCM_SERVICE_ACCOUNT"));
+  const sa = serviceAccount();
   const accessToken = await googleAccessToken(sa);
   const endpoint = `https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`;
 
@@ -140,6 +176,7 @@ Deno.serve(async (req) => {
 
   let delivered = 0;
   const stale: string[] = [];
+  const errors: string[] = [];
 
   await Promise.all(devices.map(async ({ token }) => {
     const res = await fetch(endpoint, {
@@ -168,11 +205,12 @@ Deno.serve(async (req) => {
       stale.push(token);
     } else {
       console.error(`FCM send failed (${res.status}): ${text}`);
+      errors.push(`${res.status}: ${text.slice(0, 300)}`);
     }
   }));
 
   if (stale.length) await db.from("device_tokens").delete().in("token", stale);
   if (delivered) await db.from("notifications").update({ pushed_at: new Date().toISOString() }).eq("id", note.id);
 
-  return json({ status: "ok", delivered, removed: stale.length });
-});
+  return json({ status: delivered ? "ok" : "failed", delivered, removed: stale.length, errors });
+}
