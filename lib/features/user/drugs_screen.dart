@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -6,10 +7,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../models/catalogue.dart';
+import '../../state/catalogue_cache.dart';
 import '../../state/providers.dart';
 import 'widgets/catalogue_widgets.dart';
 
@@ -25,15 +28,31 @@ class DrugsScreen extends ConsumerStatefulWidget {
 /// user can tell curated local data from an external label.
 enum DrugSource { local, fda }
 
-const _categories = [
-  'All',
-  'Antibiotic',
-  'Analgesic',
-  'Antidiabetic',
-  'NSAID',
-  'Antimalarial',
-  'Other',
-];
+/// Category chips, each matching any category text containing one of its
+/// keywords. Plain-language labels, since the catalogue's categories are
+/// clinical ("Antihypertensive (ACE Inhibitor)") and OpenFDA's differ again
+/// ("Penicillin-class Antibacterial"). "Other" is everything no chip claims.
+const _categories = <String, List<String>>{
+  'All': [],
+  'Antibiotic': ['antibiotic', 'antibacterial'],
+  'Malaria': ['antimalarial'],
+  'Pain': ['analgesic', 'nsaid', 'anti-inflammatory', 'antispasmodic'],
+  'Blood pressure': ['antihypertensive', 'calcium channel'],
+  'Diabetes': ['antidiabetic'],
+  'Allergy': ['antihistamine'],
+  'Fungal': ['antifungal'],
+  'Other': [],
+};
+
+bool _inCategory(Drug d, String tab) {
+  final category = d.category.toLowerCase();
+  bool matches(List<String> keywords) => keywords.any(category.contains);
+  return switch (tab) {
+    'All' => true,
+    'Other' => !_categories.values.any(matches),
+    _ => matches(_categories[tab] ?? const []),
+  };
+}
 
 /// Offered on the empty state so the first search is one tap. Common
 /// medicines in Kenya, spanning the category chips.
@@ -59,6 +78,11 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
   bool _loading = false;
   bool _searched = false;
   bool _locked = false;
+  String? _error;
+
+  /// See _loadSeq on the doctors screen: a search overtaken by a newer one
+  /// (two quick taps on the common searches) has its results dropped.
+  int _searchSeq = 0;
 
   @override
   void dispose() {
@@ -74,25 +98,74 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
     final q = _query.text.trim();
     if (q.isEmpty) return;
 
+    final seq = ++_searchSeq;
+
+    final cacheKey = q.toLowerCase();
+    final cache = ref.read(catalogueCacheProvider);
+    if (cache.drugs[cacheKey] case final hit?) {
+      setState(() {
+        _searched = true;
+        _locked = false;
+        _error = null;
+        _loading = false;
+        _results = hit.results;
+        _source = hit.fromFda ? DrugSource.fda : DrugSource.local;
+      });
+      return;
+    }
+
     setState(() {
       _loading = true;
       _searched = true;
       _source = null;
       _locked = false;
+      _error = null;
     });
 
     try {
-      final local = await ref.read(catalogueServiceProvider).searchDrugs(q);
+      var results = const <Drug>[];
+      var source = DrugSource.local;
+      Exception? localError;
 
-      if (local.isNotEmpty) {
-        if (!mounted) return;
-        setState(() {
-          _results = local;
-          _source = DrugSource.local;
-        });
-      } else {
-        await _fallbackToFda(q);
+      // Started now rather than after our search misses — which, with a
+      // small local catalogue, it usually does. Only used on a miss, so our
+      // own curated data still wins whenever it has an answer. The handler
+      // keeps a failure from being reported as unhandled when it is not
+      // needed; awaiting it below still sees the error.
+      final fda = _searchOpenFda(q);
+      unawaited(fda.then<void>((_) {}, onError: (Object _) {}));
+
+      try {
+        results = await ref.read(catalogueServiceProvider).searchDrugs(q);
+      } on PaywallException {
+        rethrow;
+      } on Exception catch (e) {
+        // Offline, OpenFDA is unreachable too — say so rather than try it.
+        if (isNetworkError(e)) rethrow;
+        // A genuine backend failure still falls back, as before.
+        localError = e;
       }
+
+      if (results.isEmpty) {
+        results = await fda;
+        source = DrugSource.fda;
+        // Both empty, but ours never answered: "no medicines found" would
+        // be a guess, so report the failure instead.
+        if (results.isEmpty && localError != null) throw localError;
+      }
+
+      // Hits only: a miss is worth asking again next time.
+      if (results.isNotEmpty) {
+        cache.drugs[cacheKey] = (
+          results: results,
+          fromFda: source == DrugSource.fda,
+        );
+      }
+      if (!mounted || seq != _searchSeq) return;
+      setState(() {
+        _results = results;
+        _source = results.isEmpty ? null : source;
+      });
     } on PaywallException {
       // Deliberately NOT falling through to OpenFDA here.
       //
@@ -101,31 +174,31 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
       // through an external API. The route guard normally stops a
       // non-subscriber reaching this screen at all, but defence in depth is
       // cheap and a silent leak is not.
-      if (!mounted) return;
+      if (!mounted || seq != _searchSeq) return;
       setState(() {
         _results = const [];
         _locked = true;
       });
-    } on Exception {
-      // A genuine backend failure still falls back, as before.
-      await _fallbackToFda(q);
+    } on Exception catch (e) {
+      if (!mounted || seq != _searchSeq) return;
+      setState(() {
+        _results = const [];
+        _error = errorMessage(e);
+      });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && seq == _searchSeq) setState(() => _loading = false);
     }
-  }
-
-  Future<void> _fallbackToFda(String query) async {
-    final results = await _searchOpenFda(query);
-    if (!mounted) return;
-    setState(() {
-      _results = results;
-      _source = results.isEmpty ? null : DrugSource.fda;
-    });
   }
 
   /// OpenFDA's public label API. No key required, and no auth is sent — this
   /// is a public reference lookup, not user data.
+  ///
+  /// Throws on network failure or an unusable response, so the screen can
+  /// tell "nothing matched" from "could not ask".
   Future<List<Drug>> _searchOpenFda(String query) async {
+    const unavailable = ApiException(
+      'The drug database is unavailable right now. Please try again.',
+    );
     try {
       final encoded = Uri.encodeComponent(query);
       final uri = Uri.parse(
@@ -134,11 +207,15 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
         '&limit=10',
       );
 
-      final response = await http.get(uri);
-      if (response.statusCode != 200) return const [];
+      final response = await http
+          .get(uri)
+          .timeout(const Duration(seconds: 15));
+      // OpenFDA answers a search with no matches with 404.
+      if (response.statusCode == 404) return const [];
+      if (response.statusCode != 200) throw unavailable;
 
       final body = jsonDecode(response.body);
-      if (body is! Map<String, dynamic>) return const [];
+      if (body is! Map<String, dynamic>) throw unavailable;
 
       final results = (body['results'] as List?) ?? const [];
 
@@ -167,8 +244,9 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
               uses: clip(r['indications_and_usage'], 'See full label.'),
               dosage: clip(r['dosage_and_administration'], 'See full label.'),
               sideEffects: clip(r['adverse_reactions'], 'Not listed.'),
-              // OpenFDA labels do not expose these as booleans, so they are
-              // reported as unsafe rather than guessed.
+              // OpenFDA labels do not expose these as booleans. They are set
+              // false, and _SafetyLine shows them as "not stated" for FDA
+              // results rather than as a cross.
               pregnancySafe: false,
               alcoholSafe: false,
               lactationSafe: false,
@@ -177,18 +255,13 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
                   : 'Yes',
             ),
       ];
-    } on Exception {
-      return const [];
+    } on FormatException {
+      throw unavailable;
     }
   }
 
-  List<Drug> get _filtered => _activeTab == 'All'
-      ? _results
-      : _results
-            .where(
-              (d) => d.category.toLowerCase().contains(_activeTab.toLowerCase()),
-            )
-            .toList();
+  List<Drug> get _filtered =>
+      _results.where((d) => _inCategory(d, _activeTab)).toList();
 
   @override
   Widget build(BuildContext context) {
@@ -202,7 +275,7 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _header(),
-            if (_searched && !_locked) _categoryChips(),
+            if (_searched && !_locked && _error == null) _categoryChips(),
             const Divider(height: 1, color: AppPalette.hairline),
             Expanded(child: _body()),
           ],
@@ -279,6 +352,7 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
                         _searched = false;
                         _source = null;
                         _locked = false;
+                        _error = null;
                         _activeTab = 'All';
                       }),
                     ),
@@ -301,7 +375,7 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       children: [
-        for (final cat in _categories)
+        for (final cat in _categories.keys)
           Padding(
             padding: const EdgeInsets.only(right: 6),
             child: _Pill(
@@ -340,6 +414,17 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
     }
 
     if (!_searched) return _intro();
+
+    if (_error case final error?) {
+      return _EmptyState(
+        icon: error == offlineMessage
+            ? Icons.wifi_off_rounded
+            : Icons.error_outline_rounded,
+        title: 'Could not search',
+        message: error,
+        onRetry: () => _search(),
+      );
+    }
 
     final filtered = _filtered;
     if (filtered.isEmpty) {
@@ -482,7 +567,7 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                _SafetyLine(d),
+                _SafetyLine(d, stated: _source != DrugSource.fda),
               ],
             ),
           ),
@@ -561,7 +646,7 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            _SafetyLine(d),
+            _SafetyLine(d, stated: _source != DrugSource.fda),
             const SizedBox(height: 20),
             const Text(
               'Always confirm dosage with a pharmacist or doctor before '
@@ -640,12 +725,23 @@ class _Pill extends StatelessWidget {
 /// The three safety flags as quiet text with a small tick or cross, instead
 /// of three coloured pills per row.
 class _SafetyLine extends StatelessWidget {
-  const _SafetyLine(this.drug);
+  const _SafetyLine(this.drug, {required this.stated});
 
   final Drug drug;
 
+  /// False for OpenFDA results: labels carry no such flags, and showing a
+  /// cross for "unknown" would read as "unsafe" — a medical claim nobody
+  /// made.
+  final bool stated;
+
   @override
-  Widget build(BuildContext context) => Wrap(
+  Widget build(BuildContext context) => !stated
+      ? const Text(
+          'Pregnancy, breastfeeding and alcohol safety not stated. '
+          'Ask a pharmacist.',
+          style: TextStyle(fontSize: 12, color: AppPalette.textMuted),
+        )
+      : Wrap(
     spacing: 14,
     runSpacing: 4,
     children: [
@@ -677,11 +773,13 @@ class _EmptyState extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.message,
+    this.onRetry,
   });
 
   final IconData icon;
   final String title;
   final String message;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) => ListView(
@@ -708,6 +806,20 @@ class _EmptyState extends StatelessWidget {
           color: AppPalette.textMuted,
         ),
       ),
+      if (onRetry != null) ...[
+        const SizedBox(height: 16),
+        Center(
+          child: OutlinedButton(
+            onPressed: onRetry,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.brand,
+              side: const BorderSide(color: AppColors.brand),
+              shape: const StadiumBorder(),
+            ),
+            child: const Text('Retry'),
+          ),
+        ),
+      ],
     ],
   );
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/errors.dart';
 import '../../../core/router.dart';
 import '../../../core/theme.dart';
 
@@ -318,4 +319,58 @@ class FilterChipRow extends StatelessWidget {
       ],
     );
   }
+}
+
+/// The load-failed state: why it failed and a way to try again. Kept apart
+/// from [CatalogueEmpty] so a failed request never reads as "nothing found".
+class CatalogueError extends StatelessWidget {
+  const CatalogueError({
+    required this.message,
+    required this.onRetry,
+    super.key,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 56),
+    child: Column(
+      children: [
+        Icon(
+          message == offlineMessage
+              ? Icons.wifi_off_rounded
+              : Icons.error_outline_rounded,
+          size: 34,
+          color: AppPalette.textMuted,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: AppPalette.textMuted,
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 16),
+        OutlinedButton(
+          onPressed: onRetry,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.brand,
+            side: const BorderSide(color: AppColors.brand),
+            minimumSize: Size.zero,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            shape: const StadiumBorder(),
+          ),
+          child: const Text(
+            'Retry',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    ),
+  );
 }

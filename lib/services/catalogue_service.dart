@@ -1,7 +1,6 @@
 import '../core/supabase_client.dart';
 import '../models/catalogue.dart';
 import 'auth_service.dart';
-import 'seed_catalogue.dart';
 
 /// Ports of doctor.service.ts, pharmacy.service.ts and drug.service.ts.
 ///
@@ -34,6 +33,18 @@ class CatalogueService {
     if (user == null || !user.isSubscribed) throw const PaywallException();
   }
 
+  /// Runs [query] alongside the [_requireSubscription] check rather than
+  /// after it, so a paywalled read costs one round trip instead of two. The
+  /// check still decides the outcome: a non-subscriber's query succeeds with
+  /// zero rows under RLS, and the PaywallException wins over that result.
+  Future<T> _paywalled<T>(Future<T> query) async {
+    final results = await Future.wait<Object?>([
+      _requireSubscription(),
+      query,
+    ]);
+    return results[1] as T;
+  }
+
   // ── Doctors ───────────────────────────────────────────────────────────
 
   Future<List<Doctor>> nearbyDoctors({
@@ -45,60 +56,25 @@ class CatalogueService {
     double? lng,
     double? radius,
   }) async {
-    List<Doctor> doctors = const [];
+    var query = supabase.from('doctors').select();
 
-    try {
-      await _requireSubscription();
-      var query = supabase.from('doctors').select();
-
-      if (available != null) query = query.eq('available', available);
-      if (region != null && region.trim().isNotEmpty) {
-        query = query.ilike('region', region.trim());
-      }
-      if (specialization != null && specialization.trim().isNotEmpty) {
-        query = query.ilike('specialization', specialization.trim());
-      }
-      if (search != null && search.trim().isNotEmpty) {
-        final term = '%${search.trim()}%';
-        query = query.or(
-          'name.ilike.$term,specialization.ilike.$term,'
-          'hospital.ilike.$term,location.ilike.$term,region.ilike.$term',
-        );
-      }
-
-      final rows = await query;
-      doctors = rows.map(Doctor.fromRow).toList();
-    } catch (_) {
-      // Fallback to seeded doctors if DB query fails or unauthenticated
+    if (available != null) query = query.eq('available', available);
+    if (region != null && region.trim().isNotEmpty) {
+      query = query.ilike('region', region.trim());
+    }
+    if (specialization != null && specialization.trim().isNotEmpty) {
+      query = query.ilike('specialization', specialization.trim());
+    }
+    if (search != null && search.trim().isNotEmpty) {
+      final term = '%${search.trim()}%';
+      query = query.or(
+        'name.ilike.$term,specialization.ilike.$term,'
+        'hospital.ilike.$term,location.ilike.$term,region.ilike.$term',
+      );
     }
 
-    if (doctors.isEmpty) {
-      final seeded = await SeedCatalogue.doctors();
-      doctors = seeded.where((d) {
-        if (available != null && d.available != available) return false;
-        if (region != null &&
-            region.trim().isNotEmpty &&
-            !d.location.toLowerCase().contains(region.trim().toLowerCase())) {
-          return false;
-        }
-        if (specialization != null &&
-            specialization.trim().isNotEmpty &&
-            !d.specialization
-                .toLowerCase()
-                .contains(specialization.trim().toLowerCase())) {
-          return false;
-        }
-        if (search != null && search.trim().isNotEmpty) {
-          final term = search.trim().toLowerCase();
-          final match = d.name.toLowerCase().contains(term) ||
-              d.specialization.toLowerCase().contains(term) ||
-              d.hospital.toLowerCase().contains(term) ||
-              d.location.toLowerCase().contains(term);
-          if (!match) return false;
-        }
-        return true;
-      }).toList();
-    }
+    final rows = await _paywalled(query.order('name'));
+    var doctors = rows.map(Doctor.fromRow).toList();
 
     if (lat != null && lng != null) {
       final withDist = doctors
@@ -112,30 +88,14 @@ class CatalogueService {
           .toList()
         ..sort((a, b) => (a.distanceKm ?? 0).compareTo(b.distanceKm ?? 0));
 
-      if (radius != null) {
-        final withinRadius = withDist
-            .where((d) => (d.distanceKm ?? double.infinity) <= radius)
-            .toList();
-        doctors = withinRadius.isNotEmpty ? withinRadius : withDist;
-      } else {
-        doctors = withDist;
-      }
+      doctors = radius == null
+          ? withDist
+          : withDist
+                .where((d) => (d.distanceKm ?? double.infinity) <= radius)
+                .toList();
     }
 
     return doctors;
-  }
-
-  Future<Doctor> doctor(int id) async {
-    await _requireSubscription();
-
-    final row = await supabase
-        .from('doctors')
-        .select()
-        .eq('id', id)
-        .maybeSingle();
-
-    if (row == null) throw const ApiException('Doctor not found.');
-    return Doctor.fromRow(row);
   }
 
   /// Distinct filter values for the doctors screen chips.
@@ -144,33 +104,30 @@ class CatalogueService {
   /// behind the paywall, before any directory data is fetched. RLS returns an
   /// empty list to exactly the non-subscribers who need them, so an empty
   /// result is expected here rather than an error.
-  Future<List<String>> regions() async {
-    final rows = await supabase.from('doctors').select('region');
-    final values = <String>{};
+  ///
+  /// One request for both chip rows: they come from the same rows.
+  Future<({List<String> regions, List<String> specializations})>
+  doctorFilters() async {
+    final rows = await supabase.from('doctors').select('region, specialization');
+    final regions = <String>{};
+    final specializations = <String>{};
     for (final row in rows) {
       final region = row['region'] as String?;
       if (region != null && region.isNotEmpty) {
-        values.add(region[0].toUpperCase() + region.substring(1));
+        regions.add(region[0].toUpperCase() + region.substring(1));
       }
+      final spec = row['specialization'] as String?;
+      if (spec != null && spec.isNotEmpty) specializations.add(spec);
     }
-    return values.toList()..sort();
-  }
-
-  Future<List<String>> specializations() async {
-    final rows = await supabase.from('doctors').select('specialization');
-    final values = <String>{};
-    for (final row in rows) {
-      final value = row['specialization'] as String?;
-      if (value != null && value.isNotEmpty) values.add(value);
-    }
-    return values.toList()..sort();
+    return (
+      regions: regions.toList()..sort(),
+      specializations: specializations.toList()..sort(),
+    );
   }
 
   // ── Pharmacies ────────────────────────────────────────────────────────
 
   Future<List<Pharmacy>> pharmacies({String? search}) async {
-    await _requireSubscription();
-
     var query = supabase.from('pharmacies').select();
 
     if (search != null && search.trim().isNotEmpty) {
@@ -180,30 +137,23 @@ class CatalogueService {
       );
     }
 
-    final rows = await query;
+    final rows = await _paywalled(query.order('name'));
     return rows.map(Pharmacy.fromRow).toList();
   }
 
   // ── Drugs ─────────────────────────────────────────────────────────────
 
   Future<List<Drug>> searchDrugs(String query) async {
-    await _requireSubscription();
 
     // This used to fetch every drug and filter in JS. search_drugs() runs the
     // same match server-side against a GIN index, and is not security
     // definer, so the paywall policy still applies to its results.
-    final rows = await supabase.rpc('search_drugs', params: {'q': query});
-    return (rows as List)
+    final rows = await _paywalled(
+      supabase.rpc<List<dynamic>>('search_drugs', params: {'q': query}),
+    );
+    return rows
         .cast<Map<String, dynamic>>()
         .map(Drug.fromRow)
         .toList();
-  }
-
-  Future<Drug> drug(int id) async {
-    await _requireSubscription();
-
-    final row = await supabase.from('drugs').select().eq('id', id).maybeSingle();
-    if (row == null) throw const ApiException('Drug not found.');
-    return Drug.fromRow(row);
   }
 }

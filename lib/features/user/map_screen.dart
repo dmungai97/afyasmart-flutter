@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' hide Size;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/errors.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../models/catalogue.dart';
@@ -147,6 +148,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _isSearchingArea = false;
   String _activeFilter = 'Care';
 
+  /// Why live places (our database, Mapbox) could not be loaded, while the
+  /// bundled ones are still shown. Null when everything loaded.
+  String? _liveError;
+
+  /// See _loadSeq on the doctors screen: the startup load, the background
+  /// GPS fix and a manual refresh can overlap, and only the newest may land.
+  int _fetchSeq = 0;
+
   @override
   void initState() {
     super.initState();
@@ -205,39 +214,79 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
   }
 
-  Future<void> _fetchAndMergeFacilities(({double lat, double lng}) coords) async {
-    final seeded = await _seededCentres();
-    final dbCentres = await _supabaseCentres();
-    final live = _permissionDenied ? <Centre>[] : await _mapboxCentres(coords);
-
-    final merged = _merge(live, [...dbCentres, ...seeded])
-        .map(
-          (c) => c.withDistance(
-            double.parse(
-              distanceKm(coords.lat, coords.lng, c.lat, c.lng).toStringAsFixed(1),
+  List<Centre> _withDistances(
+    List<Centre> centres,
+    ({double lat, double lng}) coords,
+  ) =>
+      centres
+          .map(
+            (c) => c.withDistance(
+              double.parse(
+                distanceKm(coords.lat, coords.lng, c.lat, c.lng)
+                    .toStringAsFixed(1),
+              ),
             ),
-          ),
-        )
-        .toList()
-      ..sort((a, b) => (a.distanceKm ?? 0).compareTo(b.distanceKm ?? 0));
+          )
+          .toList()
+        ..sort((a, b) => (a.distanceKm ?? 0).compareTo(b.distanceKm ?? 0));
 
-    if (!mounted) return;
+  Future<void> _fetchAndMergeFacilities(({double lat, double lng}) coords) async {
+    final seq = ++_fetchSeq;
+    final seeded = await _seededCentres();
+
+    // The bundled places are local, so the first paint never waits on the
+    // network; live places merge in when they arrive.
+    if (_loading && mounted && seq == _fetchSeq) {
+      setState(() {
+        _location = coords;
+        _centres = _withDistances(seeded, coords);
+        _loading = false;
+      });
+      _updateMapAnnotations();
+    }
+
+    final results = await Future.wait([
+      _supabaseCentres(),
+      if (!_permissionDenied) _mapboxCentres(coords),
+    ]);
+    final dbCentres = results[0].centres;
+    final live = results.length > 1 ? results[1].centres : const <Centre>[];
+    final error = results.map((r) => r.error).nonNulls.firstOrNull;
+
+    final merged = _withDistances(
+      _merge(live, [...dbCentres, ...seeded]),
+      coords,
+    );
+
+    if (!mounted || seq != _fetchSeq) return;
     setState(() {
       _location = coords;
       _centres = merged;
       _loading = false;
       _isSearchingArea = false;
+      _liveError = error == null
+          ? null
+          : isNetworkError(error)
+          ? 'You are offline, so only saved places are shown. Tap to retry.'
+          : 'Some nearby places could not be loaded. Tap to retry.';
     });
 
     _updateMapAnnotations();
   }
 
-  Future<List<Centre>> _supabaseCentres() async {
+  /// Doctors and pharmacies from our database. A non-subscriber gets no rows
+  /// under RLS, which is expected rather than a failure: the bundled list
+  /// covers them.
+  Future<({List<Centre> centres, Object? error})> _supabaseCentres() async {
     try {
       final centres = <Centre>[];
+      final rows = await Future.wait([
+        supabase.from('pharmacies').select(),
+        supabase.from('doctors').select(),
+      ]);
+      final ph = rows[0];
+      final docs = rows[1];
 
-      // Query Supabase pharmacies
-      final ph = await supabase.from('pharmacies').select();
       for (final p in ph) {
         final lat = (p['latitude'] as num?)?.toDouble() ?? 0.0;
         final lng = (p['longitude'] as num?)?.toDouble() ?? 0.0;
@@ -256,8 +305,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         }
       }
 
-      // Query Supabase doctors
-      final docs = await supabase.from('doctors').select();
       for (final d in docs) {
         final lat = (d['latitude'] as num?)?.toDouble() ?? 0.0;
         final lng = (d['longitude'] as num?)?.toDouble() ?? 0.0;
@@ -275,10 +322,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           );
         }
       }
-      return centres;
-    } catch (e) {
-      debugPrint('Supabase fetch notice: $e');
-      return const [];
+      return (centres: centres, error: null);
+    } on Exception catch (e) {
+      debugPrint('Supabase fetch failed: $e');
+      return (centres: const <Centre>[], error: e);
     }
   }
 
@@ -349,66 +396,80 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return centres;
   }
 
-  Future<List<Centre>> _mapboxCentres(({double lat, double lng}) coords) async {
-    if (!_useMapbox || _mapboxAccessToken.isEmpty) return const [];
+  /// Nearby places from Mapbox search. Only a rejected token turns Mapbox
+  /// off for the session; a network failure is reported and retried next
+  /// time, rather than hiding live places until the app restarts.
+  Future<({List<Centre> centres, Object? error})> _mapboxCentres(
+    ({double lat, double lng}) coords,
+  ) async {
+    if (!_useMapbox || _mapboxAccessToken.isEmpty) {
+      return (centres: const <Centre>[], error: null);
+    }
 
-    try {
-      final queries = ['clinic', 'hospital', 'pharmacy'];
+    Future<List<Centre>> search(String q) async {
+      final uri = Uri.https(
+        'api.mapbox.com',
+        '/geocoding/v5/mapbox.places/$q.json',
+        {
+          'access_token': _mapboxAccessToken,
+          'proximity': '${coords.lng},${coords.lat}',
+          'country': 'KE',
+          'types': 'poi',
+          'limit': '15',
+        },
+      );
+
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        _useMapbox = false;
+        return const [];
+      }
+      if (response.statusCode != 200) {
+        throw ApiException('Mapbox search failed (${response.statusCode}).');
+      }
+
       final results = <Centre>[];
-
-      for (final q in queries) {
-        final uri = Uri.https(
-          'api.mapbox.com',
-          '/geocoding/v5/mapbox.places/$q.json',
-          {
-            'access_token': _mapboxAccessToken,
-            'proximity': '${coords.lng},${coords.lat}',
-            'country': 'KE',
-            'types': 'poi',
-            'limit': '15',
-          },
-        );
-
-        final response = await http.get(uri).timeout(const Duration(seconds: 5));
-        if (response.statusCode == 401 || response.statusCode == 403) {
-          _useMapbox = false;
-          break;
-        }
-        if (response.statusCode != 200) continue;
-
-        final data = jsonDecode(response.body);
-        if (data case {'features': final List features}) {
-          for (final item in features) {
-            if (item case {
-              'id': final String id,
-              'text': final String name,
-              'center': [final num lngNum, final num latNum],
-            }) {
-              final placeName = '${item['place_name'] ?? ''}';
-              results.add(
-                Centre(
-                  id: 'mapbox-$id',
-                  name: name,
-                  type: _typeFromName(
-                    '$name $placeName',
-                    fallback: _typeFromQuery(q),
-                  ),
-                  lat: latNum.toDouble(),
-                  lng: lngNum.toDouble(),
-                  open: true,
-                  hours: 'Hours unknown',
+      final data = jsonDecode(response.body);
+      if (data case {'features': final List features}) {
+        for (final item in features) {
+          if (item case {
+            'id': final String id,
+            'text': final String name,
+            'center': [final num lngNum, final num latNum],
+          }) {
+            final placeName = '${item['place_name'] ?? ''}';
+            results.add(
+              Centre(
+                id: 'mapbox-$id',
+                name: name,
+                type: _typeFromName(
+                  '$name $placeName',
+                  fallback: _typeFromQuery(q),
                 ),
-              );
-            }
+                lat: latNum.toDouble(),
+                lng: lngNum.toDouble(),
+                open: true,
+                hours: 'Hours unknown',
+              ),
+            );
           }
         }
       }
-
       return results;
-    } catch (_) {
-      _useMapbox = false;
-      return const [];
     }
+
+    // The three searches are independent, so they run together, and one
+    // failing still keeps the others' results.
+    final results = <Centre>[];
+    Object? error;
+    await Future.wait([
+      for (final q in const ['clinic', 'hospital', 'pharmacy'])
+        search(q).then(results.addAll).catchError((Object e) {
+          debugPrint('Mapbox $q search failed: $e');
+          error ??= e;
+        }),
+    ]);
+    return (centres: results, error: error);
   }
 
   CentreType _typeFromQuery(String query) {
@@ -511,7 +572,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       final coords = (lat: position.latitude, lng: position.longitude);
       await _fetchAndMergeFacilities(coords);
     } catch (_) {
-      setState(() => _isSearchingArea = false);
+      if (mounted) setState(() => _isSearchingArea = false);
     }
   }
 
@@ -547,6 +608,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               _header(isWide: isWide),
               if (!isWide) _filterRow(),
               if (_permissionDenied) _permissionNotice(),
+              if (_liveError != null) _liveErrorNotice(),
               Expanded(
                 child: isWide
                     ? _wideLayout()
@@ -659,6 +721,43 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
           ),
           Icon(Icons.refresh_outlined, size: 14, color: AppPalette.orange),
+        ],
+      ),
+    ),
+  );
+
+  Widget _liveErrorNotice() => InkWell(
+    onTap: () {
+      setState(() => _liveError = null);
+      _fetchAndMergeFacilities(_location);
+    },
+    borderRadius: BorderRadius.circular(10),
+    child: Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppPalette.orangeBg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.cloud_off_outlined,
+            size: 15,
+            color: AppPalette.orange,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _liveError!,
+              style: const TextStyle(fontSize: 11, color: AppPalette.orange),
+            ),
+          ),
+          const Icon(
+            Icons.refresh_outlined,
+            size: 14,
+            color: AppPalette.orange,
+          ),
         ],
       ),
     ),

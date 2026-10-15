@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/errors.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../models/catalogue.dart';
+import '../../state/catalogue_cache.dart';
 import '../../state/providers.dart';
 import 'widgets/catalogue_widgets.dart';
 
@@ -45,6 +47,12 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
   bool _loading = true;
   bool _filtersLoading = true;
   bool _locked = false;
+  String? _error;
+
+  /// Bumped by every [_load]. A response whose number is no longer current
+  /// was overtaken by a newer filter or search and is dropped, so a slow
+  /// earlier request can never overwrite the list the user asked for last.
+  int _loadSeq = 0;
 
   String? _activeRegion;
   String? _activeSpec;
@@ -73,16 +81,26 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
   }
 
   Future<void> _loadFilters() async {
+    final cache = ref.read(catalogueCacheProvider);
+    if (cache.doctorFilters case final cached?) {
+      // The chip values barely change; one fetch per session is enough.
+      setState(() {
+        _regions = cached.regions;
+        _specializations = cached.specializations;
+        _filtersLoading = false;
+      });
+      return;
+    }
+
     try {
-      final service = ref.read(catalogueServiceProvider);
-      final results = await Future.wait([
-        service.regions(),
-        service.specializations(),
-      ]);
+      final filters = await ref.read(catalogueServiceProvider).doctorFilters();
+      if (filters.regions.isNotEmpty || filters.specializations.isNotEmpty) {
+        cache.doctorFilters = filters;
+      }
       if (!mounted) return;
       setState(() {
-        _regions = results[0];
-        _specializations = results[1];
+        _regions = filters.regions;
+        _specializations = filters.specializations;
       });
     } on Exception {
       // The chips are a convenience; a failure here must not block the list.
@@ -92,35 +110,80 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    final seq = ++_loadSeq;
+    final search = _search.text.trim().isEmpty ? null : _search.text.trim();
+    final coords = _nearMeOnly ? _coords : null;
+    final key = [
+      search,
+      _activeRegion,
+      _activeSpec,
+      if (coords != null) '${coords.lat},${coords.lng}',
+    ].join('|');
+
+    // A list already fetched for these filters shows at once; the request
+    // below then refreshes it without a spinner.
+    final cache = ref.read(catalogueCacheProvider);
+    final cached = cache.doctors[key];
+    setState(() {
+      _error = null;
+      if (cached != null) {
+        _doctors = cached;
+        _locked = false;
+      }
+      _loading = cached == null;
+    });
+
     try {
       final results = await ref
           .read(catalogueServiceProvider)
           .nearbyDoctors(
-            search: _search.text.trim().isEmpty ? null : _search.text.trim(),
+            search: search,
             region: _activeRegion,
             specialization: _activeSpec,
-            lat: _nearMeOnly ? _coords?.lat : null,
-            lng: _nearMeOnly ? _coords?.lng : null,
-            radius: _nearMeOnly ? _nearMeRadiusKm : null,
+            lat: coords?.lat,
+            lng: coords?.lng,
+            radius: coords == null ? null : _nearMeRadiusKm,
           );
-      if (!mounted) return;
+      cache.doctors[key] = results;
+      if (!mounted || seq != _loadSeq) return;
       setState(() {
         _doctors = results;
         _locked = false;
       });
     } on PaywallException {
-      if (!mounted) return;
+      if (!mounted || seq != _loadSeq) return;
       setState(() {
         _doctors = const [];
         _locked = true;
       });
-    } on Exception {
-      if (!mounted) return;
-      setState(() => _doctors = const []);
+    } on Exception catch (e) {
+      if (!mounted || seq != _loadSeq) return;
+      // A failed refresh keeps the list already on screen; offline, the
+      // banner says why.
+      if (cached != null) {
+        if (!isNetworkError(e)) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(errorMessage(e))));
+        }
+        return;
+      }
+      setState(() {
+        _doctors = const [];
+        _error = errorMessage(e);
+      });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && seq == _loadSeq) setState(() => _loading = false);
     }
+  }
+
+  /// Retries the list, and the filter chips too if those failed as well.
+  void _retry() {
+    if (_regions.isEmpty && _specializations.isEmpty) {
+      setState(() => _filtersLoading = true);
+      _loadFilters();
+    }
+    _load();
   }
 
   /// Near Me needs a fix before it can filter, so permission is requested on
@@ -133,8 +196,7 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
       return;
     }
 
-    ({double lat, double lng}) targetCoords = (lat: -1.286389, lng: 36.817223);
-
+    ({double lat, double lng})? coords;
     try {
       var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
@@ -145,22 +207,32 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
           permission == LocationPermission.always;
 
       if (isGranted) {
-        try {
-          final position = await Geolocator.getCurrentPosition().timeout(
-            const Duration(seconds: 4),
-          );
-          targetCoords = (lat: position.latitude, lng: position.longitude);
-        } catch (_) {
-          // Keep default Nairobi coordinates for distance sorting if GPS times out
-        }
+        final position = await Geolocator.getCurrentPosition().timeout(
+          const Duration(seconds: 8),
+        );
+        coords = (lat: position.latitude, lng: position.longitude);
       }
-    } catch (_) {
-      // Keep default coordinates
+    } on Object {
+      // Denied, services off, or no fix in time — handled below.
     }
 
     if (!mounted) return;
+    if (coords == null) {
+      // Sorting by distance from somewhere that is not the user would be
+      // worse than not sorting at all, so Near Me stays off.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not get your location. Check that location is on and '
+            'allowed for AfyaSmart.',
+          ),
+        ),
+      );
+      return;
+    }
+
     setState(() {
-      _coords = targetCoords;
+      _coords = coords;
       _nearMeOnly = true;
     });
     await _load();
@@ -220,12 +292,18 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
                 ? const Center(
                     child: CircularProgressIndicator(color: AppColors.brand),
                   )
+                : _error != null
+                ? SingleChildScrollView(
+                    child: CatalogueError(message: _error!, onRetry: _retry),
+                  )
                 : _doctors.isEmpty
                 ? SingleChildScrollView(
                     child: CatalogueEmpty(
                       locked: _locked,
                       lockedMessage: 'Subscribe to view doctors near you',
-                      emptyMessage: 'No doctors found',
+                      emptyMessage: _nearMeOnly
+                          ? 'No doctors within ${_nearMeRadiusKm.toInt()} km'
+                          : 'No doctors found',
                       emptyIcon: '🩺',
                       onClearFilters: _hasActiveFilters ? _clearFilters : null,
                     ),
