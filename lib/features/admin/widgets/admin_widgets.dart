@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/errors.dart';
 import '../../../core/theme.dart';
 
 /// Shared chrome for the admin console.
@@ -189,7 +190,7 @@ class AdminError extends StatelessWidget {
           const Icon(Icons.error_outline, size: 40, color: AppColors.danger),
           const SizedBox(height: 12),
           Text(
-            '$error',
+            errorMessage(error),
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 13, color: AppColors.inkMuted),
           ),

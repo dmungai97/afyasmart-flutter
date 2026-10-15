@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
@@ -486,10 +487,14 @@ class _DeleteAccountDialogState extends ConsumerState<_DeleteAccountDialog> {
       await ref.read(authControllerProvider.notifier).deleteAccount();
       if (mounted) Navigator.pop(context, true);
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    } on Exception {
+      if (mounted) setState(() => _error = errorMessage(e));
+    } on Exception catch (e) {
       if (mounted) {
-        setState(() => _error = 'Could not reach the server. Please try again.');
+        setState(
+          () => _error = isNetworkError(e)
+              ? offlineMessage
+              : 'Could not reach the server. Please try again.',
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);

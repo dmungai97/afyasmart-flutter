@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/errors.dart';
 import '../../core/theme.dart';
 import '../../models/admin.dart';
 import '../../state/providers.dart';
@@ -293,7 +294,7 @@ class _AdminTransactionsScreenState
       ).showSnackBar(SnackBar(content: Text(success)));
     } on Exception catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMessage(e))));
     }
   }
 }

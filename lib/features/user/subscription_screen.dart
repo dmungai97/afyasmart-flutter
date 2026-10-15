@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
@@ -181,10 +182,10 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
       _checkoutId = checkoutId;
       _startWatching(checkoutId, setSheetState);
     } on Exception catch (e) {
-      _failureReason = e.toString().replaceAll('ApiException: ', '');
+      _failureReason = errorMessage(e);
       setSheetState(() => _step = _PayStep.failed);
       scaffoldMessengerKey.currentState?.showSnackBar(
-        SnackBar(content: Text('STK Push failed: $e')),
+        SnackBar(content: Text('STK Push failed: ${errorMessage(e)}')),
       );
     }
   }

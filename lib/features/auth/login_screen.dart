@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
 import '../../state/auth_controller.dart';
 import 'widgets/auth_backdrop.dart';
@@ -49,7 +50,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       // The router's redirect takes it from here — a subscribed user lands on
       // home, an admin in the console.
     } on Exception catch (e) {
-      _showError(e.toString());
+      _showError(errorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -289,7 +290,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await ref.read(authControllerProvider.notifier).requestPasswordReset(email);
       _showError('Password reset link sent to $email.');
     } on Exception catch (e) {
-      _showError(e.toString());
+      _showError(errorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }

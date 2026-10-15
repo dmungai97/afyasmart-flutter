@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
@@ -144,20 +145,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ChatMessage(
             role: 'ai',
             text: e.message.isNotEmpty
-                ? e.message
+                ? errorMessage(e)
                 : 'Sorry, I could not process your request. Please try again.',
             time: _now(),
           ),
         ];
       });
-    } on Exception {
+    } on Exception catch (e) {
       if (!mounted) return;
       setState(() {
         _messages = [
           ..._messages,
           ChatMessage(
             role: 'ai',
-            text: 'Sorry, I could not process your request. Please try again.',
+            text: isNetworkError(e)
+                ? offlineMessage
+                : 'Sorry, I could not process your request. Please try again.',
             time: _now(),
           ),
         ];

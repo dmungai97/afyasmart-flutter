@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
 import '../../state/auth_controller.dart';
 import 'widgets/auth_backdrop.dart';
@@ -91,7 +92,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         context.go('${Routes.subscription}?plan=${widget.plan}');
       }
     } on Exception catch (e) {
-      _showMessage(e.toString());
+      _showMessage(errorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }

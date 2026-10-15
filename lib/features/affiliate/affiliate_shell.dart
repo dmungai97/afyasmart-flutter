@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
 import '../../core/theme.dart';
 import '../../state/affiliate_controller.dart';
@@ -42,7 +43,7 @@ class AffiliateShell extends ConsumerWidget {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  '$error',
+                  errorMessage(error),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 13,

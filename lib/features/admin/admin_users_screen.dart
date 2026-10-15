@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/errors.dart';
 import '../../core/theme.dart';
 import '../../models/admin.dart';
 import '../../models/app_user.dart';
@@ -276,7 +277,7 @@ class _AdminUsersScreenState extends ConsumerState<AdminUsersScreen> {
       ).showSnackBar(const SnackBar(content: Text('User updated.')));
     } on Exception catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMessage(e))));
     }
   }
 }

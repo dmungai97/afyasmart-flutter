@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
 import '../../core/theme.dart';
 import '../../state/diagnosis_controller.dart';
@@ -104,7 +105,7 @@ class _AnalysisLoadingScreenState extends ConsumerState<AnalysisLoadingScreen>
       _pulse.stop();
       _spin.stop();
       _progress.stop();
-      setState(() => _error = e.toString());
+      setState(() => _error = errorMessage(e));
     }
   }
 

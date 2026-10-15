@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
+import '../../../core/errors.dart';
 import '../../../state/auth_controller.dart';
 import 'auth_backdrop.dart';
 
@@ -104,7 +105,7 @@ class _GoogleSignInButtonState extends ConsumerState<GoogleSignInButton> {
         widget.onError(e.description ?? 'Google sign-in failed.');
       }
     } on Exception catch (e) {
-      widget.onError(e.toString());
+      widget.onError(errorMessage(e));
     } finally {
       widget.onFinish();
     }

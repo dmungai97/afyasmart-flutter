@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
 import '../../core/theme.dart';
 import '../../services/symptoms_service.dart';
@@ -184,7 +185,7 @@ class _SymptomsScreenState extends ConsumerState<SymptomsScreen> {
       _tick2?.cancel();
       if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        _error = errorMessage(e);
         _step = _Step.results;
       });
     }

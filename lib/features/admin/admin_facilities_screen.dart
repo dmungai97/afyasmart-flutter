@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/errors.dart';
 import '../../core/theme.dart';
 import '../../models/admin.dart';
 import '../../state/admin_controller.dart';
@@ -208,7 +209,7 @@ class _AdminFacilitiesScreenState
       ).showSnackBar(const SnackBar(content: Text('Facility deleted.')));
     } on Exception catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMessage(e))));
     }
   }
 
@@ -243,7 +244,7 @@ class _AdminFacilitiesScreenState
       );
     } on Exception catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMessage(e))));
     }
   }
 }

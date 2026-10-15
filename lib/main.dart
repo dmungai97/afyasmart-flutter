@@ -8,6 +8,7 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'core/router.dart';
 import 'core/supabase_client.dart';
 import 'core/theme.dart';
+import 'features/shell/offline_banner.dart';
 import 'services/push_service.dart';
 import 'state/auth_controller.dart';
 import 'state/notifications_controller.dart';
@@ -133,6 +134,8 @@ class _AfyaSmartAppState extends ConsumerState<AfyaSmartApp> {
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       routerConfig: ref.watch(routerProvider),
+      builder: (context, child) =>
+          OfflineBanner(child: child ?? const SizedBox.shrink()),
     );
   }
 }

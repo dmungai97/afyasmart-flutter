@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/errors.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../state/providers.dart';
@@ -58,9 +59,13 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
       _confirm.clear();
       _toast('Your password has been changed.');
     } on ApiException catch (e) {
-      _toast(e.message);
-    } on Exception {
-      _toast('Could not change your password. Please try again.');
+      _toast(errorMessage(e));
+    } on Exception catch (e) {
+      _toast(
+        isNetworkError(e)
+            ? offlineMessage
+            : 'Could not change your password. Please try again.',
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }

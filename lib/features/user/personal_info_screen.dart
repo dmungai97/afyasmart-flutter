@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/errors.dart';
 import '../../core/supabase_client.dart';
 import '../../state/auth_controller.dart';
 import '../auth/widgets/auth_backdrop.dart';
@@ -48,9 +49,13 @@ class _PersonalInfoScreenState extends ConsumerState<PersonalInfoScreen> {
           .updateProfile(name: _name.text, phone: _phone.text);
       _toast('Your details have been saved.');
     } on ApiException catch (e) {
-      _toast(e.message);
-    } on Exception {
-      _toast('Could not save your details. Please try again.');
+      _toast(errorMessage(e));
+    } on Exception catch (e) {
+      _toast(
+        isNetworkError(e)
+            ? offlineMessage
+            : 'Could not save your details. Please try again.',
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }

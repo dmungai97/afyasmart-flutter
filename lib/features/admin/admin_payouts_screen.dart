@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/errors.dart';
 import '../../core/theme.dart';
 import '../../models/admin.dart';
 import '../../state/admin_controller.dart';
@@ -159,7 +160,7 @@ class AdminPayoutsScreen extends ConsumerWidget {
       );
     } on Exception catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMessage(e))));
     }
   }
 }
