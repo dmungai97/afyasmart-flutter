@@ -207,6 +207,106 @@ function contextNote(user?: Record<string, any> | null): string {
   );
 }
 
+type CatalogueDrug = {
+  name: string;
+  generic_name: string;
+  category: string;
+  uses: string;
+  dosage: string;
+  side_effects: string;
+  pregnancy_safe: boolean;
+  alcohol_safe: boolean;
+  lactation_safe: boolean;
+  prescription_required: string;
+};
+
+// The catalogue is small and changes only by migration, so a warm instance
+// keeps it rather than reading it on every message.
+const CATALOGUE_TTL_MS = 10 * 60 * 1000;
+let catalogueCache: { drugs: CatalogueDrug[]; at: number } | null = null;
+
+/** The whole drug catalogue. Empty on failure: the chat works without it. */
+// deno-lint-ignore no-explicit-any
+async function loadCatalogue(db: any): Promise<CatalogueDrug[]> {
+  if (catalogueCache && Date.now() - catalogueCache.at < CATALOGUE_TTL_MS) {
+    return catalogueCache.drugs;
+  }
+  const { data, error } = await db
+    .from("drugs")
+    .select(
+      "name, generic_name, category, uses, dosage, side_effects, pregnancy_safe, alcohol_safe, lactation_safe, prescription_required",
+    );
+  if (error) {
+    console.error("Could not load drug catalogue", error);
+    return catalogueCache?.drugs ?? [];
+  }
+  catalogueCache = { drugs: data ?? [], at: Date.now() };
+  return catalogueCache.drugs;
+}
+
+/**
+ * Every name a user might call a drug by: the catalogue name, the generic,
+ * each part of a combination ("Artemether/Lumefantrine"), and the Kenyan
+ * brands listed in its uses ("Common brands in Kenya: Panadol, Calpol.").
+ */
+function drugTerms(d: CatalogueDrug): string[] {
+  const brands = d.uses.match(/Common brands in Kenya: ([^.]+)\./)?.[1] ?? "";
+  return [d.name, d.generic_name, ...brands.split(",")]
+    .flatMap((t) => [t, ...t.split(/[\/+()]/)])
+    // "Postinor-2" is asked about as "postinor".
+    .flatMap((t) => [t, t.replace(/[-\s]*\d+\s*$/, "")])
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length >= 3);
+}
+
+const escapeRegExp = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Catalogue drugs named anywhere in [text], whole words only, at most [limit]. */
+function matchDrugs(text: string, drugs: CatalogueDrug[], limit = 5): CatalogueDrug[] {
+  const haystack = text.toLowerCase();
+  return drugs
+    .filter((d) =>
+      drugTerms(d).some((t) => new RegExp(`(^|[^a-z])${escapeRegExp(t)}([^a-z]|$)`).test(haystack))
+    )
+    .slice(0, limit);
+}
+
+/**
+ * The catalogue entries for medicines in this conversation, so dosing and
+ * safety answers follow the reviewed Kenyan entries the Medicines screen
+ * shows, not the model's general (often US-label) knowledge.
+ *
+ * A false safety flag means "not established", not "unsafe": the catalogue
+ * sets true only where safety is well established.
+ */
+function catalogueNote(drugs: CatalogueDrug[]): string {
+  if (drugs.length === 0) return "";
+
+  const flag = (safe: boolean) =>
+    safe ? "generally considered safe" : "not established as safe; needs a pharmacist's or doctor's advice";
+  const entries = drugs
+    .map((d) =>
+      [
+        `- **${d.name}** (${d.generic_name}; ${d.category})`,
+        `  Uses: ${d.uses}`,
+        `  Dosing: ${d.dosage}`,
+        `  Side effects: ${d.side_effects}`,
+        `  Pregnancy: ${flag(d.pregnancy_safe)}. Breastfeeding: ${flag(d.lactation_safe)}. With alcohol: ${flag(d.alcohol_safe)}.`,
+        `  Prescription needed: ${d.prescription_required}`,
+      ].join("\n")
+    )
+    .join("\n");
+
+  return (
+    "\n\nAFYASMART MEDICINE CATALOGUE (Kenyan entries for medicines in this conversation):\n" +
+    entries +
+    "\n- For these medicines, base dosing, safety and prescription status on these entries, not general knowledge. " +
+    "Where an entry says not established as safe, do not call it safe; tell them to check with a pharmacist or doctor. " +
+    "Use the Kenyan brand names when it helps the user recognise the medicine. " +
+    "For any medicine not listed here, answer from general knowledge and suggest confirming the dose with a pharmacist."
+  );
+}
+
 /** The model could not produce a reply. Nothing is recorded for the turn. */
 class ReplyError extends Error {}
 
@@ -223,6 +323,7 @@ async function generateReply(
   history: Turn[],
   user?: Record<string, any> | null,
   diagnosis: Diagnosis | null = null,
+  catalogue = "",
 ): Promise<string> {
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
   if (!openaiKey) return mockReply(message);
@@ -234,7 +335,8 @@ async function generateReply(
       {
         role: "system",
         content:
-          SYSTEM_PROMPT + EMERGENCY_RULES + STYLE_RULES + contextNote(user) + diagnosisNote(diagnosis),
+          SYSTEM_PROMPT + EMERGENCY_RULES + STYLE_RULES + contextNote(user) + diagnosisNote(diagnosis) +
+          catalogue,
       },
     ];
 
@@ -307,14 +409,28 @@ async function handleSend(req: Request): Promise<Response> {
     );
   }
 
-  const [history, diagnosis] = await Promise.all([
+  const [history, diagnosis, drugs] = await Promise.all([
     loadHistory(db, authUser.id),
     loadLatestDiagnosis(db, authUser.id),
+    loadCatalogue(db),
   ]);
+
+  // Medicines named in this message, the last exchange (so "can I take it
+  // with food?" still finds the drug) and the symptom check's suggestions.
+  // Every chat gets this, free ones included: accurate dosing and safety is
+  // not something to hold back for subscribers.
+  const mentioned = matchDrugs(
+    [
+      message,
+      ...history.slice(-2).map((t) => t.text),
+      ...(diagnosis?.medications ?? []).map((m) => m?.name ?? ""),
+    ].join("\n"),
+    drugs,
+  );
 
   let reply: string;
   try {
-    reply = await generateReply(message, history, user, diagnosis);
+    reply = await generateReply(message, history, user, diagnosis, catalogueNote(mentioned));
   } catch (err) {
     if (!(err instanceof ReplyError)) throw err;
     // Not recorded and not counted: the user keeps their free chat and can
