@@ -178,12 +178,19 @@ class DiagnosisState {
     this.pendingDiagnosis,
     this.healthCheckAnswers,
     this.pendingAnalysisRequest,
+    this.unsavedToHistory = false,
     this.hydrated = false,
   });
 
   final PendingDiagnosis? pendingDiagnosis;
   final HealthCheckAnswers? healthCheckAnswers;
   final PendingAnalysisRequest? pendingAnalysisRequest;
+
+  /// The pending diagnosis came from an onboarding check run before there was
+  /// an account to own it, and still has to be added to the history once the
+  /// user signs in. The chat reads that history for context, so without this
+  /// the user's first conversation would know nothing about their check.
+  final bool unsavedToHistory;
 
   /// SharedPreferences reads are async, so there is a brief window on start
   /// where this still holds its defaults before the persisted blob loads. A
@@ -196,9 +203,19 @@ class DiagnosisState {
 class DiagnosisController extends Notifier<DiagnosisState> {
   static const _key = 'afyasmart-diagnosis';
 
+  /// An onboarding result older than this is not attached to whoever signs
+  /// in next: by then it is as likely to be someone else's check on a shared
+  /// phone as the new account's own.
+  static const _historyClaimWindow = Duration(hours: 24);
+
+  bool _flushing = false;
+
   @override
   DiagnosisState build() {
-    unawaited(_load());
+    ref.listen(authControllerProvider.select((s) => s.user?.id), (_, id) {
+      if (id != null) unawaited(_flushToHistory());
+    });
+    unawaited(_load().then((_) => _flushToHistory()));
     return const DiagnosisState();
   }
 
@@ -230,6 +247,7 @@ class DiagnosisController extends Notifier<DiagnosisState> {
             : PendingAnalysisRequest.fromJson(
                 json['pendingAnalysisRequest'] as Map<String, dynamic>,
               ),
+        unsavedToHistory: json['unsavedToHistory'] == true,
       );
     } on Object {
       // A malformed blob (an older shape, a truncated write) must not brick
@@ -247,6 +265,7 @@ class DiagnosisController extends Notifier<DiagnosisState> {
         'pendingDiagnosis': state.pendingDiagnosis?.toJson(),
         'healthCheckAnswers': state.healthCheckAnswers?.toJson(),
         'pendingAnalysisRequest': state.pendingAnalysisRequest?.toJson(),
+        'unsavedToHistory': state.unsavedToHistory,
       }),
     );
   }
@@ -257,6 +276,7 @@ class DiagnosisController extends Notifier<DiagnosisState> {
       pendingDiagnosis: state.pendingDiagnosis,
       healthCheckAnswers: answers,
       pendingAnalysisRequest: state.pendingAnalysisRequest,
+      unsavedToHistory: state.unsavedToHistory,
     );
     await _persist();
   }
@@ -267,18 +287,62 @@ class DiagnosisController extends Notifier<DiagnosisState> {
       pendingDiagnosis: state.pendingDiagnosis,
       healthCheckAnswers: state.healthCheckAnswers,
       pendingAnalysisRequest: request,
+      unsavedToHistory: state.unsavedToHistory,
     );
     await _persist();
   }
 
-  Future<void> setPendingDiagnosis(PendingDiagnosis diagnosis) async {
+  Future<void> setPendingDiagnosis(
+    PendingDiagnosis diagnosis, {
+    bool unsavedToHistory = false,
+  }) async {
     state = DiagnosisState(
       hydrated: true,
       pendingDiagnosis: diagnosis,
       healthCheckAnswers: state.healthCheckAnswers,
       pendingAnalysisRequest: state.pendingAnalysisRequest,
+      unsavedToHistory: unsavedToHistory,
     );
     await _persist();
+  }
+
+  /// An onboarding check's result. Shown like any other, and added to the
+  /// account's history as soon as there is a signed-in user to own it —
+  /// immediately if there already is one.
+  Future<void> recordOnboardingDiagnosis(PendingDiagnosis diagnosis) async {
+    await setPendingDiagnosis(diagnosis, unsavedToHistory: true);
+    await _flushToHistory();
+  }
+
+  /// Saves an onboarding result that is still waiting for an account. Safe to
+  /// call at any time; it does nothing unless there is such a result and a
+  /// signed-in user. A failed insert keeps the flag so the next sign-in or
+  /// app start retries it.
+  Future<void> _flushToHistory() async {
+    final diagnosis = state.pendingDiagnosis;
+    if (_flushing || !state.hydrated || !state.unsavedToHistory) return;
+    if (diagnosis == null) return;
+    if (ref.read(authControllerProvider).user == null) return;
+
+    _flushing = true;
+    try {
+      final fresh =
+          DateTime.now().difference(diagnosis.preparedAt) < _historyClaimWindow;
+      if (fresh) {
+        await ref
+            .read(diagnosisHistoryServiceProvider)
+            .save(diagnosis.toJson());
+        ref.invalidate(diagnosisHistoryProvider);
+      }
+      // Only clear the flag if the result we saved is still the current one.
+      if (identical(state.pendingDiagnosis, diagnosis)) {
+        await setPendingDiagnosis(diagnosis);
+      }
+    } on Exception {
+      // Retried on the next sign-in or app start.
+    } finally {
+      _flushing = false;
+    }
   }
 
   /// A signed-in symptom check: becomes the latest result shown on the
@@ -302,6 +366,7 @@ class DiagnosisController extends Notifier<DiagnosisState> {
       hydrated: true,
       pendingDiagnosis: state.pendingDiagnosis,
       healthCheckAnswers: state.healthCheckAnswers,
+      unsavedToHistory: state.unsavedToHistory,
     );
     await _persist();
   }

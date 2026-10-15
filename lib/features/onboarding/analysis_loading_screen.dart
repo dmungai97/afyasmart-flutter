@@ -65,7 +65,7 @@ class _AnalysisLoadingScreenState extends ConsumerState<AnalysisLoadingScreen>
       final analysis = await request.run(ref.read(symptomsServiceProvider));
       if (!mounted) return;
 
-      await controller.setPendingDiagnosis(
+      await controller.recordOnboardingDiagnosis(
         PendingDiagnosis(
           symptoms: request.symptoms.join(', '),
           summary: analysis.urgencyDesc,

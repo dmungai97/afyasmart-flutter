@@ -124,11 +124,17 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
           symptom: symptom,
           age: HealthCheckMapping.age(answers),
           severity: HealthCheckMapping.severity(answers),
+          feeling: answers?.feeling,
+          concern: answers?.concern,
           history: history,
         );
 
     if (!mounted) return;
     _hideTyping();
+
+    // The AI's acknowledgement of what they just said, or a plain fallback
+    // when the clarify call was unavailable.
+    final ack = result.ack ?? 'Got it.';
 
     if (!result.done) {
       final question = result.question ?? 'Can you tell me a bit more?';
@@ -137,28 +143,30 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
         _currentOptions = result.options ?? const [];
         _stage = _Stage.clarify;
       });
-      _append([_Message(fromUser: false, text: question)]);
+      _append([
+        if (result.ack != null) _Message(fromUser: false, text: result.ack!),
+        _Message(fromUser: false, text: question),
+      ]);
       return;
     }
 
-    if (result.duration != null) {
+    // "Not specified" is the model saying it could not tell, so ask.
+    final duration = result.duration == 'Not specified'
+        ? null
+        : result.duration;
+
+    if (duration != null) {
       setState(() {
-        _durationAnswer = result.duration;
+        _durationAnswer = duration;
         _stage = _Stage.gender;
       });
       _append([
-        const _Message(
-          fromUser: false,
-          text: 'Got it. And which best describes you?',
-        ),
+        _Message(fromUser: false, text: '$ack And which best describes you?'),
       ]);
     } else {
       setState(() => _stage = _Stage.duration);
       _append([
-        const _Message(
-          fromUser: false,
-          text: 'Got it. How long have you had this?',
-        ),
+        _Message(fromUser: false, text: '$ack How long have you had this?'),
       ]);
     }
   }
@@ -208,6 +216,14 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
     _append([_Message(fromUser: true, text: option)]);
 
     await _runClarifyStep(_symptomText, List.of(_clarifyHistory));
+  }
+
+  /// A typed answer to the AI's question, for when none of the options fit.
+  Future<void> _sendClarifyText() async {
+    final text = _input.text.trim();
+    if (text.isEmpty || _stage != _Stage.clarify) return;
+    _input.clear();
+    await _pickClarify(text);
   }
 
   Future<void> _pickDuration(String option) async {
@@ -337,8 +353,19 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
   /// The footer is one of: the free-text composer, a chip row, or nothing
   /// while a step is in flight.
   Widget _footer() => switch (_stage) {
-    _Stage.symptom => _composer(),
-    _Stage.clarify => _chips(_currentOptions, _pickClarify),
+    _Stage.symptom => _composer(
+      onSend: _sendSymptom,
+      hint: 'Describe how you feel…',
+    ),
+    // Options for a quick tap, plus the composer for an answer that none of
+    // them fits.
+    _Stage.clarify => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _chips(_currentOptions, _pickClarify),
+        _composer(onSend: _sendClarifyText, hint: 'Or type your answer…'),
+      ],
+    ),
     _Stage.duration => _chips(_durationOptions, _pickDuration),
     _Stage.gender => _chips(
       _genderOptions.map((g) => g.label).toList(),
@@ -384,7 +411,10 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
         ),
       );
 
-  Widget _composer() => Container(
+  Widget _composer({
+    required Future<void> Function() onSend,
+    required String hint,
+  }) => Container(
     padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
     decoration: const BoxDecoration(
       border: Border(top: BorderSide(color: AppColors.rule)),
@@ -398,16 +428,13 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
             minLines: 1,
             maxLines: 4,
             textInputAction: TextInputAction.send,
-            onSubmitted: (_) => _sendSymptom(),
-            decoration: const InputDecoration(
-              hintText: 'Describe how you feel…',
-              isDense: true,
-            ),
+            onSubmitted: (_) => onSend(),
+            decoration: InputDecoration(hintText: hint, isDense: true),
           ),
         ),
         const SizedBox(width: 10),
         IconButton.filled(
-          onPressed: _sendSymptom,
+          onPressed: onSend,
           style: IconButton.styleFrom(
             backgroundColor: AppColors.ink,
             foregroundColor: AppColors.paper,

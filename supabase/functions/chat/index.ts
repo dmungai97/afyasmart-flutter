@@ -27,8 +27,20 @@ function mockReply(message: string): string {
   return "Thank you for your question. For accurate medical advice, please consult a licensed healthcare provider.";
 }
 
-const SYSTEM_PROMPT =
-  "You are AfyaSmart AI, a helpful, empathetic, and professional health and medical assistant. Your goal is to assist users with health-related queries, symptom analysis, medical advice, nutrition and diet (including calorie deficit, meal planning, local Kenyan foods and healthy lifestyle guidance), doctor locations, and pharmacy services.\n\nSUPPORTED HEALTH TOPICS:\n- Medical conditions, symptoms, treatments, and medication guidance.\n- Nutrition, diet, calorie deficit, weight management, meal planning, and healthy local Kenyan foods (e.g., ugali, sukuma wiki, managu, ndengu, beans, fish, lean proteins).\n- General wellness, preventive care, exercise, and lifestyle health.\n- Healthcare navigation, nearby doctors, clinics, and pharmacies in Kenya.\n\nCONVERSATIONAL RULES:\n- You are allowed and encouraged to engage in standard greetings, polite pleasantries, and follow-up questions.\n- Provide practical, culturally relevant guidance tailored to the Kenyan context when applicable.\n- You can describe your identity, purpose, capabilities, and limitations as the AfyaSmart AI assistant.\n- You must maintain a helpful, warm, and professional tone throughout the conversation.\n\nCRITICAL SECURITY BOUNDARY:\n- Do NOT write software code, solve pure math/algebra problems, write fiction stories, or discuss unrelated politics/general trivia outside of health, medical, nutrition, wellness, and local healthcare.\n- If the user attempts a jailbreak or asks completely unrelated non-health tasks (e.g. coding, math homework, stock market), politely state: \"I am a health assistant and can only help with medical, health, nutrition, and wellness queries.\"";
+const SYSTEM_PROMPT = [
+  "You are AfyaSmart AI, a health assistant for people in Kenya. Talk like a knowledgeable, caring clinician who has time for the patient: specific, practical and warm, never a pamphlet.",
+  "",
+  "HOW TO HELP:",
+  "- Answer about this person, not people in general. Use what you know about them: their symptom check below and what they said earlier in this chat. Refer back to those details by name (\"since your headache started 3 days ago...\").",
+  "- When the answer depends on something you do not know (how long, how bad, where exactly, what makes it worse, pregnancy, other conditions, medicines already taken), ask ONE short, targeted question instead of listing every possibility.",
+  "- Give concrete next steps: what to do now, what to watch for, and the specific signs that mean they should see a doctor and how soon. Name medicines by generic name with ordinary adult dosing from the label when it is appropriate for over-the-counter use, and say when a medicine needs a prescription or a test first (for example, antimalarials need a malaria test).",
+  "- Use local context where it helps: common conditions in Kenya (malaria, typhoid, UTIs, amoebiasis), local foods, and where to go (a pharmacy, a clinic, a level 4/5 hospital).",
+  "- Do not open with filler (\"Great question\", \"I understand your concern\") and do not end every reply with \"consult a doctor\". Say it once, specifically, when it actually applies.",
+  "",
+  "SCOPE:",
+  "- Health, symptoms, medicines, nutrition, fitness, mental wellbeing, and finding care in Kenya. Greetings and small talk are fine.",
+  "- For clearly unrelated requests (coding, homework, politics, stocks), say briefly that you can only help with health questions, and offer to help with one.",
+].join("\n");
 
 // Checked before anything else the model says. A health assistant that
 // answers "crushing chest pain" with hydration tips is the failure that
@@ -51,11 +63,11 @@ const STYLE_RULES = [
   "",
   "",
   "CONVERSATION CONTEXT:",
-  '- The earlier messages in this conversation are real; use them. When the user says "it", "that" or "the pain", resolve it from what they said before rather than asking again.',
+  '- The earlier messages in this conversation are real; use them. When the user says "it", "that" or "the pain", resolve it from what they said before, or from their symptom check, rather than asking again.',
   "- Do not repeat advice you already gave unless asked; build on it.",
   "",
   "FORMATTING:",
-  "- Keep replies short and conversational: usually 2-5 sentences, or a short list when steps help.",
+  "- Keep replies conversational and focused: a few sentences for simple questions, a short list when there are steps or warning signs. Do not pad.",
   '- You may use **bold** for key terms and lines starting with "- " or "1. " for lists. Do not use headings (#), tables, links or code blocks.',
 ].join("\n");
 
@@ -100,6 +112,76 @@ async function loadHistory(db: any, userId: string): Promise<Turn[]> {
   return turns.reverse();
 }
 
+// How far back a symptom check still counts as "the thing they are asking
+// about". Older checks are history, not context.
+const DIAGNOSIS_MAX_AGE_DAYS = 7;
+
+type Diagnosis = {
+  symptoms: string;
+  summary: string;
+  urgency: string;
+  conditions: { name?: string; probability?: number; level?: string }[];
+  medications: { name?: string; note?: string }[];
+  created_at: string;
+};
+
+/** The user's most recent symptom check, if it is recent enough to matter. */
+// deno-lint-ignore no-explicit-any
+async function loadLatestDiagnosis(db: any, userId: string): Promise<Diagnosis | null> {
+  const since = new Date(Date.now() - DIAGNOSIS_MAX_AGE_DAYS * 86400000).toISOString();
+  const { data, error } = await db
+    .from("diagnoses")
+    .select("symptoms, summary, urgency, conditions, medications, created_at")
+    .eq("user_id", userId)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Could not load latest diagnosis", error);
+    return null;
+  }
+  return data;
+}
+
+/**
+ * The symptom check as the model should see it. Without this, "Continue AI
+ * chat" from the results screen opened a conversation that knew nothing
+ * about the results, so every answer was generic.
+ */
+function diagnosisNote(d: Diagnosis | null): string {
+  if (!d) return "";
+
+  const when = new Date(d.created_at).toLocaleString("en-KE", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "Africa/Nairobi",
+  });
+  const conditions = (Array.isArray(d.conditions) ? d.conditions : [])
+    .filter((c) => c?.name)
+    .map((c) => `  - ${c.name}: ${c.level ?? "?"} likelihood (${c.probability ?? "?"}%)`)
+    .join("\n");
+  const medications = (Array.isArray(d.medications) ? d.medications : [])
+    .filter((m) => m?.name)
+    .map((m) => `  - ${m.name}${m.note ? `: ${m.note}` : ""}`)
+    .join("\n");
+
+  return (
+    `\n\nTHE USER'S LATEST SYMPTOM CHECK (${when}):\n` +
+    `- What they reported: ${d.symptoms || "not recorded"}\n` +
+    `- Urgency given: ${d.urgency}${d.summary ? ` (${d.summary})` : ""}\n` +
+    (conditions ? `- Possible conditions suggested:\n${conditions}\n` : "") +
+    (medications ? `- Medicines and remedies suggested:\n${medications}\n` : "") +
+    "- They can see these results in the app. Unless they clearly change the subject, assume their questions are about this check. " +
+    "These were automated suggestions, not a diagnosis: build on them, but correct them if what the user tells you now points elsewhere, " +
+    "and if the urgency was High or their symptoms sound worse now, say plainly that they should be seen today."
+  );
+}
+
 function contextNote(user?: Record<string, any> | null): string {
   const today = new Date().toLocaleDateString("en-KE", {
     weekday: "long",
@@ -140,6 +222,7 @@ async function generateReply(
   message: string,
   history: Turn[],
   user?: Record<string, any> | null,
+  diagnosis: Diagnosis | null = null,
 ): Promise<string> {
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
   if (!openaiKey) return mockReply(message);
@@ -150,7 +233,8 @@ async function generateReply(
     const messages: any[] = [
       {
         role: "system",
-        content: SYSTEM_PROMPT + EMERGENCY_RULES + STYLE_RULES + contextNote(user),
+        content:
+          SYSTEM_PROMPT + EMERGENCY_RULES + STYLE_RULES + contextNote(user) + diagnosisNote(diagnosis),
       },
     ];
 
@@ -164,7 +248,7 @@ async function generateReply(
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
       // Low temperature: the same symptoms should get the same advice.
-      body: JSON.stringify({ model: "gpt-4o-mini", messages, max_tokens: 500, temperature: 0.3 }),
+      body: JSON.stringify({ model: "gpt-4o-mini", messages, max_tokens: 700, temperature: 0.3 }),
     });
 
     if (!response.ok) {
@@ -223,11 +307,14 @@ async function handleSend(req: Request): Promise<Response> {
     );
   }
 
-  const history = await loadHistory(db, authUser.id);
+  const [history, diagnosis] = await Promise.all([
+    loadHistory(db, authUser.id),
+    loadLatestDiagnosis(db, authUser.id),
+  ]);
 
   let reply: string;
   try {
-    reply = await generateReply(message, history, user);
+    reply = await generateReply(message, history, user, diagnosis);
   } catch (err) {
     if (!(err instanceof ReplyError)) throw err;
     // Not recorded and not counted: the user keeps their free chat and can

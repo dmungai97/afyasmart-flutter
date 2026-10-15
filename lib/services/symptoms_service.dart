@@ -88,12 +88,18 @@ class ClarifyResult {
     this.question,
     this.options,
     this.duration,
+    this.ack,
   });
 
   final bool done;
   final String? question;
   final List<String>? options;
   final String? duration;
+
+  /// A sentence reflecting back what the user just said, shown before the
+  /// next question in place of a canned "Got it". Absent when the endpoint
+  /// was unavailable.
+  final String? ack;
 
   static const finished = ClarifyResult(done: true);
 }
@@ -173,6 +179,8 @@ class SymptomsService {
     required String symptom,
     int? age,
     String? severity,
+    String? feeling,
+    String? concern,
     List<({String question, String answer})> history = const [],
   }) async {
     try {
@@ -188,6 +196,8 @@ class SymptomsService {
           'symptom': symptom,
           'age': age,
           'severity': severity,
+          'feeling': feeling,
+          'concern': concern,
           'history': history
               .map((qa) => {'question': qa.question, 'answer': qa.answer})
               .toList(),
@@ -211,9 +221,10 @@ class SymptomsService {
           .toList();
       final question = data['question'] as String?;
       final durationHint = data['duration'] as String?;
+      final ack = data['ack'] as String?;
 
       if (!done && (question == null || options == null || options.isEmpty)) {
-        return ClarifyResult(done: true, duration: durationHint);
+        return ClarifyResult(done: true, duration: durationHint, ack: ack);
       }
 
       return ClarifyResult(
@@ -221,6 +232,7 @@ class SymptomsService {
         question: question,
         options: options,
         duration: durationHint,
+        ack: ack,
       );
     } on Exception {
       return ClarifyResult.finished;
