@@ -17,16 +17,17 @@ import 'providers.dart';
 /// silently drops the user's answers and the screens fall back to generic
 /// placeholder data instead of their actual results.
 
+/// No percentage: the model used to invent one ("Malaria 80%"), which read
+/// as a measured probability. Older stored rows still carry a 'probability'
+/// key; it is ignored.
 class DiagnosisCondition {
   const DiagnosisCondition({
     required this.name,
-    required this.probability,
     required this.level,
     required this.color,
   });
 
   final String name;
-  final int probability;
 
   /// 'High' | 'Medium' | 'Low'
   final String level;
@@ -36,7 +37,6 @@ class DiagnosisCondition {
 
   Map<String, dynamic> toJson() => {
     'name': name,
-    'probability': probability,
     'level': level,
     'color': color,
   };
@@ -44,7 +44,6 @@ class DiagnosisCondition {
   factory DiagnosisCondition.fromJson(Map<String, dynamic> json) =>
       DiagnosisCondition(
         name: json['name'] as String? ?? '',
-        probability: (json['probability'] as num?)?.toInt() ?? 0,
         level: json['level'] as String? ?? 'Low',
         color: json['color'] as String? ?? '#0B6E6E',
       );
@@ -394,7 +393,9 @@ final diagnosisControllerProvider =
 
 /// The signed-in user's past symptom checks, newest first. Keyed on the user
 /// id so signing in as someone else never shows the previous account's rows.
-final diagnosisHistoryProvider = FutureProvider<List<PendingDiagnosis>>((ref) async {
+final diagnosisHistoryProvider = FutureProvider<List<PendingDiagnosis>>((
+  ref,
+) async {
   final userId = ref.watch(authControllerProvider.select((s) => s.user?.id));
   if (userId == null) return const [];
 
@@ -438,143 +439,5 @@ extension PendingAnalysisRequestCall on PendingAnalysisRequest {
     duration: duration,
     severity: severity,
     answers: answers,
-  );
-}
-
-/// Port of buildDiagnosisFromSymptoms() in diagnosisStore.ts.
-///
-/// A keyword heuristic used only as a fallback when a screen needs something
-/// to render and the stored analysis is gone (a cold start that lost it).
-/// It is not a diagnosis and never reaches the AI — it exists so the results
-/// screen shows a plausible shape rather than an empty panel.
-PendingDiagnosis buildDiagnosisFromSymptoms(String symptoms) {
-  final text = symptoms.toLowerCase();
-  bool has(List<String> words) => words.any(text.contains);
-
-  final hasFever = has(['fever', 'chills', 'sweat']);
-  final hasCough = has(['cough', 'cold', 'throat']);
-  final hasStomach = has(['stomach', 'diarrhea', 'vomit', 'nausea']);
-  final hasChest = has(['chest', 'breath']);
-
-  final urgency = hasChest
-      ? 'High'
-      : (hasFever || hasStomach)
-      ? 'Medium'
-      : 'Low';
-
-  const red = '#DC2626';
-  const amber = '#D97706';
-  const teal = '#0B6E6E';
-
-  final conditions = hasStomach
-      ? const [
-          DiagnosisCondition(
-            name: 'Gastroenteritis or food poisoning',
-            probability: 72,
-            level: 'High',
-            color: red,
-          ),
-          DiagnosisCondition(
-            name: 'Acid reflux or gastritis',
-            probability: 48,
-            level: 'Medium',
-            color: amber,
-          ),
-          DiagnosisCondition(
-            name: 'Typhoid or other infection',
-            probability: 31,
-            level: 'Low',
-            color: teal,
-          ),
-        ]
-      : hasCough
-      ? const [
-          DiagnosisCondition(
-            name: 'Flu or upper respiratory infection',
-            probability: 76,
-            level: 'High',
-            color: red,
-          ),
-          DiagnosisCondition(
-            name: 'Allergic irritation',
-            probability: 42,
-            level: 'Medium',
-            color: amber,
-          ),
-          DiagnosisCondition(
-            name: 'Bronchitis',
-            probability: 28,
-            level: 'Low',
-            color: teal,
-          ),
-        ]
-      : hasFever
-      ? const [
-          DiagnosisCondition(
-            name: 'Malaria or viral fever',
-            probability: 68,
-            level: 'High',
-            color: red,
-          ),
-          DiagnosisCondition(
-            name: 'Flu-like illness',
-            probability: 47,
-            level: 'Medium',
-            color: amber,
-          ),
-          DiagnosisCondition(
-            name: 'Bacterial infection',
-            probability: 24,
-            level: 'Low',
-            color: teal,
-          ),
-        ]
-      : const [
-          DiagnosisCondition(
-            name: 'General viral illness',
-            probability: 61,
-            level: 'High',
-            color: red,
-          ),
-          DiagnosisCondition(
-            name: 'Fatigue or dehydration',
-            probability: 39,
-            level: 'Medium',
-            color: amber,
-          ),
-          DiagnosisCondition(
-            name: 'Stress-related symptoms',
-            probability: 22,
-            level: 'Low',
-            color: teal,
-          ),
-        ];
-
-  return PendingDiagnosis(
-    symptoms: symptoms,
-    urgency: urgency,
-    conditions: conditions,
-    preparedAt: DateTime.now(),
-    summary:
-        'Your symptoms have been analysed against common patterns. This is '
-        'not a final medical diagnosis, but it helps you decide what to do next.',
-    medications: [
-      const DiagnosisMedication(
-        name: 'Paracetamol 500mg',
-        note: 'For fever or pain. Follow label directions and avoid overdose.',
-      ),
-      const DiagnosisMedication(
-        name: 'Oral rehydration salts',
-        note:
-            'Useful if you have vomiting, diarrhea, fever, or signs of '
-            'dehydration.',
-      ),
-      DiagnosisMedication(
-        name: 'Doctor review',
-        note: urgency == 'High'
-            ? 'Recommended urgently because of your symptom pattern.'
-            : 'Recommended if symptoms persist or worsen.',
-      ),
-    ],
   );
 }

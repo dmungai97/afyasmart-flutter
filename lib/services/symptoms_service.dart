@@ -8,24 +8,29 @@ import '../core/supabase_client.dart';
 
 /// Port of src/services/symptoms.service.ts.
 
+/// Plain wording for a 'High' | 'Medium' | 'Low' likelihood. Shown instead
+/// of a percentage, which a symptom description cannot support.
+String likelihoodLabel(String level) => switch (level) {
+  'High' => 'More likely',
+  'Medium' => 'Possible',
+  _ => 'Less likely',
+};
+
 class ConditionResult {
   const ConditionResult({
     required this.name,
     required this.likelihood,
-    required this.percent,
     required this.color,
   });
 
   final String name;
   final String likelihood;
-  final int percent;
   final String color;
 
   factory ConditionResult.fromJson(Map<String, dynamic> json) =>
       ConditionResult(
         name: json['name'] as String? ?? '',
         likelihood: json['likelihood'] as String? ?? 'Low',
-        percent: (json['percent'] as num?)?.toInt() ?? 0,
         color: json['color'] as String? ?? '#0B6E6E',
       );
 }
@@ -167,7 +172,9 @@ class SymptomsService {
       return SymptomsAnalysis.fromJson(data);
     }
 
-    throw const ApiException('Invalid response format received from the server.');
+    throw const ApiException(
+      'Invalid response format received from the server.',
+    );
   }
 
   /// Best-effort — fails safe to "done" on any error so a flaky or

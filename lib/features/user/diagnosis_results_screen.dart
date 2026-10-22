@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/router.dart';
 import '../../core/theme.dart';
+import '../../services/symptoms_service.dart';
 import '../../state/diagnosis_controller.dart';
 
 /// Port of src/user/screens/DiagnosisResultsScreen.tsx — the unlocked view of
@@ -29,10 +30,11 @@ class DiagnosisResultsScreen extends ConsumerWidget {
       diagnosisControllerProvider.select((s) => s.pendingDiagnosis),
     );
 
-    // Falls back to the keyword heuristic when the stored analysis is gone,
-    // so the screen shows a plausible result rather than an empty panel.
-    final diagnosis =
-        stored ?? buildDiagnosisFromSymptoms('fever, headache, body weakness');
+    // The stored analysis can be gone (a cold start that lost it). This used
+    // to render a keyword-guessed "Malaria or viral fever" result in its
+    // place, which looked exactly like a real one. Say so instead.
+    final diagnosis = stored;
+    if (diagnosis == null) return _missing(context);
 
     final urgencyColor = switch (diagnosis.urgency) {
       'High' => _red,
@@ -77,6 +79,52 @@ class DiagnosisResultsScreen extends ConsumerWidget {
       ),
     );
   }
+
+  Widget _missing(BuildContext context) => Scaffold(
+    backgroundColor: const Color(0xFFF5F7FA),
+    appBar: AppBar(
+      backgroundColor: const Color(0xFFF5F7FA),
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () =>
+            context.canPop() ? context.pop() : context.go(Routes.home),
+      ),
+    ),
+    body: Padding(
+      padding: const EdgeInsets.all(Insets.lg),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            "We couldn't find your results",
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: AppPalette.textStrong,
+            ),
+          ),
+          const SizedBox(height: Insets.sm),
+          const Text(
+            'Your last analysis was not saved on this device. Run a new '
+            'symptom check to see an up-to-date result.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              color: AppPalette.textBody,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: Insets.lg),
+          FilledButton(
+            onPressed: () => context.go(Routes.symptoms),
+            child: const Text('Start a symptom check'),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Widget _header(BuildContext context) => Container(
     width: double.infinity,
@@ -173,7 +221,7 @@ class DiagnosisResultsScreen extends ConsumerWidget {
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [_title('Possible Conditions'), _label('PROBABILITY')],
+          children: [_title('Possible Conditions'), _label('LIKELIHOOD')],
         ),
         const SizedBox(height: 14),
         for (final c in d.conditions) _conditionRow(c),
@@ -197,46 +245,19 @@ class DiagnosisResultsScreen extends ConsumerWidget {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  c.name,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppPalette.textStrong,
-                  ),
-                ),
-                Text(
-                  '${c.level} match',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppPalette.textMuted,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(Radii.pill),
-                  child: LinearProgressIndicator(
-                    value: c.probability / 100,
-                    minHeight: 6,
-                    backgroundColor: AppPalette.hairline,
-                    valueColor: AlwaysStoppedAnimation(color),
-                  ),
-                ),
-              ],
+            child: Text(
+              c.name,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: AppPalette.textStrong,
+              ),
             ),
           ),
           const SizedBox(width: 10),
           Text(
-            '${c.probability}%',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: color,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+            likelihoodLabel(c.level),
+            style: const TextStyle(fontSize: 13, color: AppPalette.textBody),
           ),
         ],
       ),

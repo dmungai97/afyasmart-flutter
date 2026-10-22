@@ -120,7 +120,7 @@ type Diagnosis = {
   symptoms: string;
   summary: string;
   urgency: string;
-  conditions: { name?: string; probability?: number; level?: string }[];
+  conditions: { name?: string; level?: string }[];
   medications: { name?: string; note?: string }[];
   created_at: string;
 };
@@ -163,7 +163,7 @@ function diagnosisNote(d: Diagnosis | null): string {
   });
   const conditions = (Array.isArray(d.conditions) ? d.conditions : [])
     .filter((c) => c?.name)
-    .map((c) => `  - ${c.name}: ${c.level ?? "?"} likelihood (${c.probability ?? "?"}%)`)
+    .map((c) => `  - ${c.name}: ${c.level ?? "?"} likelihood`)
     .join("\n");
   const medications = (Array.isArray(d.medications) ? d.medications : [])
     .filter((m) => m?.name)

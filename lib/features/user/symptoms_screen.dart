@@ -114,8 +114,7 @@ class _SymptomsScreenState extends ConsumerState<SymptomsScreen> {
     super.dispose();
   }
 
-  bool get _subscribed =>
-      ref.read(currentUserProvider)?.isSubscribed ?? false;
+  bool get _subscribed => ref.read(currentUserProvider)?.isSubscribed ?? false;
 
   Future<void> _startProcessing() async {
     setState(() {
@@ -162,7 +161,6 @@ class _SymptomsScreenState extends ConsumerState<SymptomsScreen> {
                   .map(
                     (c) => DiagnosisCondition(
                       name: c.name,
-                      probability: c.percent,
                       level: c.likelihood,
                       color: c.color,
                     ),
@@ -760,11 +758,7 @@ class _SymptomsScreenState extends ConsumerState<SymptomsScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.error_outline,
-                size: 48,
-                color: AppPalette.red,
-              ),
+              const Icon(Icons.error_outline, size: 48, color: AppPalette.red),
               const SizedBox(height: 16),
               const Text(
                 "We couldn't finish your check",
@@ -1024,9 +1018,7 @@ class _SymptomsScreenState extends ConsumerState<SymptomsScreen> {
   Widget _conditionRow(ConditionResult c) {
     final cleaned = c.color.replaceFirst('#', '');
     final parsed = int.tryParse(cleaned, radix: 16);
-    final color = parsed == null
-        ? AppColors.brand
-        : Color(0xFF000000 | parsed);
+    final color = parsed == null ? AppColors.brand : Color(0xFF000000 | parsed);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -1041,46 +1033,19 @@ class _SymptomsScreenState extends ConsumerState<SymptomsScreen> {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  c.name,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppPalette.textStrong,
-                  ),
-                ),
-                Text(
-                  '${c.likelihood} match',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppPalette.textMuted,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(Radii.pill),
-                  child: LinearProgressIndicator(
-                    value: c.percent / 100,
-                    minHeight: 5,
-                    backgroundColor: AppPalette.hairline,
-                    valueColor: AlwaysStoppedAnimation(color),
-                  ),
-                ),
-              ],
+            child: Text(
+              c.name,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppPalette.textStrong,
+              ),
             ),
           ),
           const SizedBox(width: 10),
           Text(
-            '${c.percent}%',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: color,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+            likelihoodLabel(c.likelihood),
+            style: const TextStyle(fontSize: 13, color: AppPalette.textBody),
           ),
         ],
       ),

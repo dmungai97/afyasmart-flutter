@@ -313,7 +313,7 @@ class _DiagnosisRecordCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    '${c.name} (${c.probability}%)',
+                    c.name,
                     style: const TextStyle(
                       fontSize: 12,
                       color: AppPalette.textStrong,

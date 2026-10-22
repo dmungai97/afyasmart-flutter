@@ -75,7 +75,6 @@ class _AnalysisLoadingScreenState extends ConsumerState<AnalysisLoadingScreen>
               .map(
                 (c) => DiagnosisCondition(
                   name: c.name,
-                  probability: c.percent,
                   level: c.likelihood,
                   color: c.color,
                 ),

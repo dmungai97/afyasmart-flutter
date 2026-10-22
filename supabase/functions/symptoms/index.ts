@@ -17,28 +17,12 @@ import { adminClient } from "../_shared/supabase.ts";
 import { json, preflight } from "../_shared/http.ts";
 import { SYMPTOM_FREE_DAILY_LIMIT, isSubscribed } from "../_shared/subscription.ts";
 
-// deno-lint-ignore no-explicit-any
-function mockSymptomsResponse(): any {
-  return {
-    urgency: "High",
-    urgency_desc: "Your symptoms may need medical attention. Seek advice from a professional.",
-    conditions: [
-      { name: "Malaria", likelihood: "High", percent: 80, color: "#EF4444" },
-      { name: "Flu (Influenza)", likelihood: "Medium", percent: 45, color: "#F59E0B" },
-      { name: "Typhoid", likelihood: "Low", percent: 20, color: "#0B6E6E" },
-    ],
-    medications: [
-      { name: "Paracetamol 500mg", desc: "For fever and pain", icon: "💊" },
-      { name: "ORS", desc: "To prevent dehydration", icon: "🧃" },
-      { name: "Antimalarial", desc: "Seek doctor's advice first", icon: "💉" },
-    ],
-    self_care: [
-      "Rest and drink plenty of fluids",
-      "Take paracetamol for fever",
-      "Eat light and healthy meals",
-    ],
-  };
-}
+// There is deliberately no canned fallback result. One used to stand in for
+// any failure ("Malaria, 80%"), indistinguishable from a real analysis, so a
+// headache during an OpenAI outage came back as probable malaria. A failure
+// is now an honest error the app shows with a retry.
+const ANALYZE_UNAVAILABLE =
+  "We couldn't analyse your symptoms right now. Please try again in a moment. If you feel very unwell, don't wait: visit the nearest hospital or call 999.";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -89,6 +73,15 @@ async function withinQuota(
   return data === true;
 }
 
+/** Hands back a counted call that failed to produce a result. Best effort. */
+async function releaseQuota(subjectId: string, kind: "analyze" | "clarify"): Promise<void> {
+  const { error } = await adminClient().rpc("release_symptom_quota", {
+    p_subject_id: subjectId,
+    p_kind: kind,
+  });
+  if (error) console.error("release_symptom_quota failed", error);
+}
+
 const ANALYZE_SYSTEM_PROMPT =
   'You are a professional medical analysis assistant. Your role is to suggest possible conditions based on symptoms.\n' +
   'You must return a raw JSON response representing the diagnosis.\n\n' +
@@ -97,8 +90,10 @@ const ANALYZE_SYSTEM_PROMPT =
   '  "urgency": "High" | "Medium" | "Low",\n' +
   '  "urgency_desc": "Explanation of urgency based on symptoms.",\n' +
   '  "conditions": [\n' +
-  '    { "name": "Condition Name", "likelihood": "High" | "Medium" | "Low", "percent": integer_between_0_and_100, "color": "#EF4444" for High | "#F59E0B" for Medium | "#0B6E6E" for Low }\n' +
+  '    { "name": "Condition Name", "likelihood": "High" | "Medium" | "Low", "color": "#EF4444" for High | "#F59E0B" for Medium | "#0B6E6E" for Low }\n' +
   '  ],\n' +
+  '  (conditions ordered from most to least likely; no percentages, since a\n' +
+  '  symptom description cannot support a numeric probability)\n' +
   '  "medications": [\n' +
   '    { "name": "Medication Name", "desc": "Short description of what it does", "icon": "💊" | "🧃" | "💉" }\n' +
   '  ],\n' +
@@ -110,7 +105,7 @@ const ANALYZE_SYSTEM_PROMPT =
   'IMPORTANT — calibrate to how much detail you actually have: if the ' +
   'symptom description and any follow-up answers are vague, minimal, or ' +
   'just a few words with no specifics (location, sensation, triggers, ' +
-  'etc.), you MUST use noticeably lower percent values (all under 40) and ' +
+  'etc.), you MUST rate every condition "Low" likelihood and ' +
   'make urgency_desc explicitly say the input was too limited for a ' +
   'confident read, encouraging the user to describe their symptoms in ' +
   'more detail. Never present specific-sounding conditions or ' +
@@ -133,7 +128,8 @@ const CLARIFY_SYSTEM_PROMPT = [
   "}",
   "",
   "THE ACK:",
-  '- Echo their own words or detail ("A throbbing headache behind the eyes, that helps."; "Two days of loose stools, okay."). Never a bare "Got it" or "Thank you".',
+  '- Pick up the ONE new detail from their last answer, in a few natural words ("Behind the eyes, okay."; "Two days, that helps."). Never a bare "Got it" or "Thank you".',
+  '- Under 10 words. Do not restate the whole symptom, do not repeat details already acknowledged, and do not end with "noted".',
   "- Do not diagnose, reassure, or suggest causes.",
   "",
   "THE QUESTION:",
@@ -232,6 +228,9 @@ async function askOpenAI(systemPrompt: string, userPrompt: string, maxTokens: nu
 }
 
 async function handleAnalyze(req: Request): Promise<Response> {
+  // Set once a call has been counted against the free quota, so a failure
+  // after that point gives the check back.
+  let counted: string | null = null;
   try {
     if (req.method !== "POST") {
       return json({ status: "error", message: "Method not allowed" }, 405);
@@ -265,6 +264,7 @@ async function handleAnalyze(req: Request): Promise<Response> {
           429,
         );
       }
+      counted = subjectId;
     }
 
     const answersText = answers && typeof answers === "object" ? formatAnswers(answers) : "";
@@ -277,19 +277,29 @@ async function handleAnalyze(req: Request): Promise<Response> {
       `- Duration: ${duration}\n` +
       `- Severity: ${severity}\n` +
       (answersText ? `- Further details from the patient:\n${answersText}` : "") +
-      "\nBased on this information, provide the top 3 possible medical conditions (with likelihood and probability percentage), self-care instructions, and commonly suggested medications/remedies.";
+      "\nBased on this information, provide the top 3 possible medical conditions (each with a likelihood), self-care instructions, and commonly suggested medications/remedies.";
 
     const result = await askOpenAI(ANALYZE_SYSTEM_PROMPT, prompt, 1020, 0.3);
 
-    if (!result || !result.conditions) {
-      return json({ status: "success", data: mockSymptomsResponse() });
+    if (!result || !Array.isArray(result.conditions) || result.conditions.length === 0) {
+      if (counted) await releaseQuota(counted, "analyze");
+      return json({ status: "error", message: ANALYZE_UNAVAILABLE }, 503);
     }
+
+    // The same danger-sign net as clarify: whatever the model rated, a red
+    // flag anywhere in what the patient said is urgent.
+    if (hasRedFlag(symptoms.join(" "), answersText)) {
+      result.urgency = "High";
+      if (!/999|112/.test(String(result.urgency_desc ?? ""))) {
+        result.urgency_desc = `${EMERGENCY_ACK} ${result.urgency_desc ?? ""}`.trim();
+      }
+    }
+
     return json({ status: "success", data: result });
   } catch (error) {
-    // Onboarding must never dead-end on a backend problem, so every failure
-    // degrades to the mock result rather than an error screen.
     console.error("symptomsAnalyze failed", error);
-    return json({ status: "success", data: mockSymptomsResponse() });
+    if (counted) await releaseQuota(counted, "analyze");
+    return json({ status: "error", message: ANALYZE_UNAVAILABLE }, 503);
   }
 }
 
