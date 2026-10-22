@@ -73,7 +73,7 @@ class CatalogueService {
       );
     }
 
-    final rows = await _paywalled(query.order('name'));
+    final rows = await _paywalled(query.order('name', ascending: true));
     var doctors = rows.map(Doctor.fromRow).toList();
 
     if (lat != null && lng != null) {
@@ -137,7 +137,7 @@ class CatalogueService {
       );
     }
 
-    final rows = await _paywalled(query.order('name'));
+    final rows = await _paywalled(query.order('name', ascending: true));
     return rows.map(Pharmacy.fromRow).toList();
   }
 

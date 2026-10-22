@@ -74,12 +74,10 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  assets:
-    # The catalogue seed data, also used by the map screen for its
-    # unauthenticated, non-paywalled list. Copied from the repo-root
-    # seed-data/ folder, which the RN app still reads directly; that folder
-    # moves here when the RN app is removed.
-    - assets/seed/
+  # assets/seed/ is not bundled: it only feeds scripts/build-supabase-seed.js
+  # for a local database. Its doctors and pharmacies are invented
+  # (placeholder phones, emails on real hospitals' domains), so they must
+  # not ship in the app or appear on the map.
 
   # To add assets to your application, add an assets section, like this:
   # assets:
