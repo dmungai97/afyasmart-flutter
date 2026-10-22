@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/errors.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../models/catalogue.dart';
+import '../../state/catalogue_cache.dart';
 import '../../state/providers.dart';
 import 'widgets/catalogue_widgets.dart';
 
@@ -22,6 +24,11 @@ class _PharmacyScreenState extends ConsumerState<PharmacyScreen> {
   List<Pharmacy> _pharmacies = const [];
   bool _loading = true;
   bool _locked = false;
+  String? _error;
+  String? _lastQuery;
+
+  /// See _loadSeq on the doctors screen: stale responses are dropped.
+  int _loadSeq = 0;
 
   @override
   void initState() {
@@ -36,35 +43,62 @@ class _PharmacyScreenState extends ConsumerState<PharmacyScreen> {
   }
 
   Future<void> _load([String? query]) async {
-    setState(() => _loading = true);
+    final seq = ++_loadSeq;
+    _lastQuery = query;
+
+    // See the doctors screen: a cached list shows at once and is refreshed.
+    final key = query?.trim() ?? '';
+    final cache = ref.read(catalogueCacheProvider);
+    final cached = cache.pharmacies[key];
+    setState(() {
+      _error = null;
+      if (cached != null) {
+        _pharmacies = cached;
+        _locked = false;
+      }
+      _loading = cached == null;
+    });
+
     try {
       final results = await ref
           .read(catalogueServiceProvider)
           .pharmacies(search: query);
-      if (!mounted) return;
+      cache.pharmacies[key] = results;
+      if (!mounted || seq != _loadSeq) return;
       setState(() {
         _pharmacies = results;
         _locked = false;
       });
     } on PaywallException {
-      if (!mounted) return;
+      if (!mounted || seq != _loadSeq) return;
       setState(() {
         _pharmacies = const [];
         _locked = true;
       });
-    } on Exception {
-      if (!mounted) return;
-      setState(() => _pharmacies = const []);
+    } on Exception catch (e) {
+      if (!mounted || seq != _loadSeq) return;
+      if (cached != null) {
+        if (!isNetworkError(e)) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(errorMessage(e))));
+        }
+        return;
+      }
+      setState(() {
+        _pharmacies = const [];
+        _error = errorMessage(e);
+      });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && seq == _loadSeq) setState(() => _loading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFFF5F7FA),
-      child: Column(
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7FA),
+      body: Column(
         children: [
           const CatalogueHeader(
             title: 'Pharmacy Listings',
@@ -79,6 +113,13 @@ class _PharmacyScreenState extends ConsumerState<PharmacyScreen> {
             child: _loading
                 ? const Center(
                     child: CircularProgressIndicator(color: AppColors.brand),
+                  )
+                : _error != null
+                ? SingleChildScrollView(
+                    child: CatalogueError(
+                      message: _error!,
+                      onRetry: () => _load(_lastQuery),
+                    ),
                   )
                 : _pharmacies.isEmpty
                 ? SingleChildScrollView(

@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 1.1.0+100
 
 environment:
   sdk: ^3.13.4
@@ -30,6 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -39,11 +41,15 @@ dependencies:
   go_router: ^18.0.1
   google_sign_in: ^7.2.0
   geolocator: ^14.0.3
-  google_maps_flutter: ^2.18.1
+  mapbox_maps_flutter: ^2.8.0
   shared_preferences: ^2.5.5
   intl: ^0.20.3
   url_launcher: ^6.3.2
   http: ^1.6.0
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
+  flutter_local_notifications: ^22.3.1
+  connectivity_plus: ^7.3.1
 
 dev_dependencies:
   flutter_test:
@@ -55,6 +61,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -67,12 +74,10 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  assets:
-    # The catalogue seed data, also used by the map screen for its
-    # unauthenticated, non-paywalled list. Copied from the repo-root
-    # seed-data/ folder, which the RN app still reads directly; that folder
-    # moves here when the RN app is removed.
-    - assets/seed/
+  # assets/seed/ is not bundled: it only feeds scripts/build-supabase-seed.js
+  # for a local database. Its doctors and pharmacies are invented
+  # (placeholder phones, emails on real hospitals' domains), so they must
+  # not ship in the app or appear on the map.
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -104,3 +109,23 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# App icons, generated with `dart run flutter_launcher_icons` from:
+#
+#   app-icon.png             1024x1024, no transparency (iOS rejects alpha)
+#   app-icon-foreground.png  1024x1024, mark inside the central ~66% safe zone,
+#                            transparent around it (Android adaptive icon)
+#
+# The current artwork is a simple teal cross, a stand-in until there is a
+# designed logo. The other files in assets/branding/ are Expo's template
+# placeholders and are not used.
+flutter_launcher_icons:
+  image_path: assets/branding/app-icon.png
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  adaptive_icon_background: "#005454"
+  adaptive_icon_foreground: assets/branding/app-icon-foreground.png
+  web:
+    generate: true
+    image_path: assets/branding/app-icon.png

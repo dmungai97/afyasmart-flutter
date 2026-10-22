@@ -16,8 +16,6 @@ class ChatMessage {
   final String? time;
 
   bool get isUser => role == 'user';
-
-  Map<String, dynamic> toWire() => {'role': role, 'text': text};
 }
 
 class SendMessageResult {
@@ -48,7 +46,6 @@ class ChatService {
 
   Future<SendMessageResult> send({
     required String message,
-    required List<ChatMessage> history,
     required AppUser? user,
   }) async {
     if (currentUserId == null) {
@@ -69,10 +66,9 @@ class ChatService {
         'Content-Type': 'application/json',
         if (token != null) 'Authorization': 'Bearer $token',
       },
-      body: jsonEncode({
-        'message': message,
-        'history': history.map((m) => m.toWire()).toList(),
-      }),
+      // No history: the edge function reads the stored conversation itself,
+      // so app-only messages (greeting, local errors) never reach the model.
+      body: jsonEncode({'message': message}),
     );
 
     final body = _decode(response.body);
@@ -120,6 +116,16 @@ class ChatService {
           ),
         )
         .toList();
+  }
+
+  /// Clears the conversation so the next message starts fresh, for the
+  /// model as well as on screen. The exchanges stay in chat_logs and the
+  /// free-chat count is unchanged; see start_new_chat().
+  Future<void> startNewChat() async {
+    if (currentUserId == null) {
+      throw const ApiException('You must be signed in to use chat.');
+    }
+    await supabase.rpc<void>('start_new_chat');
   }
 
   static Map<String, dynamic>? _decode(String body) {

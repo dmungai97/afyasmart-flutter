@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
+import '../../../core/errors.dart';
 import '../../../state/auth_controller.dart';
 import 'auth_backdrop.dart';
 
@@ -47,6 +49,13 @@ class GoogleSignInButton extends ConsumerStatefulWidget {
   );
   static const _iosClientId = String.fromEnvironment('GOOGLE_IOS_CLIENT_ID');
 
+  /// Whether this platform can show the button at all.
+  ///
+  /// google_sign_in 7 has no authenticate() on web — the browser flow only
+  /// works through Google's own rendered button — so on web the screens hide
+  /// this control and offer email registration alone.
+  static bool get isSupported => !kIsWeb;
+
   @override
   ConsumerState<GoogleSignInButton> createState() => _GoogleSignInButtonState();
 }
@@ -69,9 +78,7 @@ class _GoogleSignInButtonState extends ConsumerState<GoogleSignInButton> {
 
   Future<void> _signIn() async {
     if (GoogleSignInButton._serverClientId.isEmpty) {
-      widget.onError(
-        'Google sign-in is not configured for this build.',
-      );
+      widget.onError('Google sign-in is not configured for this build.');
       return;
     }
 
@@ -96,7 +103,7 @@ class _GoogleSignInButtonState extends ConsumerState<GoogleSignInButton> {
         widget.onError(e.description ?? 'Google sign-in failed.');
       }
     } on Exception catch (e) {
-      widget.onError(e.toString());
+      widget.onError(errorMessage(e));
     } finally {
       widget.onFinish();
     }
@@ -108,7 +115,11 @@ class _GoogleSignInButtonState extends ConsumerState<GoogleSignInButton> {
       height: 50,
       child: OutlinedButton.icon(
         onPressed: widget.enabled ? _signIn : null,
-        icon: const Icon(Icons.g_mobiledata, size: 28, color: Color(0xFFEA4335)),
+        icon: const Icon(
+          Icons.g_mobiledata,
+          size: 28,
+          color: Color(0xFFEA4335),
+        ),
         label: const Text(
           'Continue with Google',
           style: TextStyle(

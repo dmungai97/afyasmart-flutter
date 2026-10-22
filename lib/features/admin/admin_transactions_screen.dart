@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/errors.dart';
 import '../../core/theme.dart';
 import '../../models/admin.dart';
 import '../../state/providers.dart';
@@ -98,7 +99,9 @@ class _AdminTransactionsScreenState
                     labelStyle: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: _filter == f ? AppColors.paper : AppColors.inkMuted,
+                      color: _filter == f
+                          ? AppColors.paper
+                          : AppColors.inkMuted,
                     ),
                   ),
                 ),
@@ -187,11 +190,8 @@ class _AdminTransactionsScreenState
               ),
             ],
           ),
-          // Only an unpaid payment can be acted on: admin_reconcile_payment
-          // returns early for one already paid, and admin_reject_payment only
-          // touches rows that are not paid.
-          if (!p.paid) ...[
-            const Divider(height: 20),
+          if (p.status == 'pending') ...[
+            const Divider(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -199,6 +199,11 @@ class _AdminTransactionsScreenState
                   onPressed: () => _reject(p),
                   style: TextButton.styleFrom(
                     foregroundColor: AppColors.danger,
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   child: const Text('Reject'),
                 ),
@@ -206,10 +211,19 @@ class _AdminTransactionsScreenState
                 FilledButton(
                   onPressed: () => _reconcile(p),
                   style: FilledButton.styleFrom(
-                    minimumSize: Size.zero,
+                    backgroundColor: AppColors.ink,
+                    foregroundColor: AppColors.paper,
+                    visualDensity: VisualDensity.compact,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                   child: const Text('Mark paid'),
@@ -283,12 +297,12 @@ class _AdminTransactionsScreenState
       await action();
       await _load(reset: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(success)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(success)));
     } on Exception catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(errorMessage(e))));
     }
   }
 }

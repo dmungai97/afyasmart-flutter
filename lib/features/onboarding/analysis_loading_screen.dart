@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
 import '../../core/theme.dart';
 import '../../state/diagnosis_controller.dart';
@@ -65,7 +66,7 @@ class _AnalysisLoadingScreenState extends ConsumerState<AnalysisLoadingScreen>
       final analysis = await request.run(ref.read(symptomsServiceProvider));
       if (!mounted) return;
 
-      await controller.setPendingDiagnosis(
+      await controller.recordOnboardingDiagnosis(
         PendingDiagnosis(
           symptoms: request.symptoms.join(', '),
           summary: analysis.urgencyDesc,
@@ -74,7 +75,6 @@ class _AnalysisLoadingScreenState extends ConsumerState<AnalysisLoadingScreen>
               .map(
                 (c) => DiagnosisCondition(
                   name: c.name,
-                  probability: c.percent,
                   level: c.likelihood,
                   color: c.color,
                 ),
@@ -104,7 +104,7 @@ class _AnalysisLoadingScreenState extends ConsumerState<AnalysisLoadingScreen>
       _pulse.stop();
       _spin.stop();
       _progress.stop();
-      setState(() => _error = e.toString());
+      setState(() => _error = errorMessage(e));
     }
   }
 

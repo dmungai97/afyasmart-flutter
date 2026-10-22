@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/errors.dart';
 import '../../core/theme.dart';
 import '../../models/admin.dart';
 import '../../models/app_user.dart';
@@ -95,18 +96,38 @@ class _AdminUsersScreenState extends ConsumerState<AdminUsersScreen> {
           child: TextField(
             controller: _search,
             onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
-              hintText: 'Filter loaded users by name, email or phone',
-              prefixIcon: Icon(Icons.search, size: 20),
+            decoration: InputDecoration(
+              hintText: 'Search name, email or phone',
+              prefixIcon: const Icon(Icons.search, size: 20),
+              suffixIcon: _search.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 18),
+                      onPressed: () => setState(() => _search.clear()),
+                    )
+                  : null,
               isDense: true,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              _search.text.isEmpty
+                  ? '${rows.length}${_hasMore ? '+' : ''} '
+                        'user${rows.length == 1 ? '' : 's'}'
+                  : '${rows.length} '
+                        'match${rows.length == 1 ? '' : 'es'}',
+              style: const TextStyle(fontSize: 13, color: AppColors.inkMuted),
             ),
           ),
         ),
         Expanded(
           child: rows.isEmpty
-              ? const AdminEmpty(message: 'No users match that filter.')
+              ? const AdminEmpty(message: 'No users match that search.')
               : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                   itemCount: rows.length + (_hasMore ? 1 : 0),
                   itemBuilder: (_, i) {
                     if (i == rows.length) return _loadMore();
@@ -123,54 +144,78 @@ class _AdminUsersScreenState extends ConsumerState<AdminUsersScreen> {
     child: Center(
       child: _loading
           ? const CircularProgressIndicator(color: AppColors.ruleStrong)
-          : OutlinedButton(
-              onPressed: _load,
-              child: const Text('Load more'),
-            ),
+          : OutlinedButton(onPressed: _load, child: const Text('Load more')),
     ),
   );
 
-  Widget _row(AdminUserRow u) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: AdminCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  /// One compact row per user on the paper, separated by a rule, the whole
+  /// row opening the editor. Each user used to be a full card with a
+  /// divider and a small faint "Edit" link, so about six fitted on a phone.
+  Widget _row(AdminUserRow u) => InkWell(
+    onTap: () => _edit(u),
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: AppColors.rule)),
+      ),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      u.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.ink,
-                      ),
-                    ),
-                    Text(
-                      u.email,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.inkMuted,
-                      ),
-                    ),
-                  ],
-                ),
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: AppColors.ink.withValues(alpha: 0.08),
+            child: Text(
+              u.name.isNotEmpty ? u.name[0].toUpperCase() : 'U',
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppColors.ink,
               ),
-              if (u.role != 'user') ...[
-                StatusPill(
-                  label: u.role.replaceAll('_', ' '),
-                  tone: StatusTone.warning,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  u.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.ink,
+                  ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(height: 2),
+                Text(
+                  u.email,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.inkMuted,
+                  ),
+                ),
+                Text(
+                  'Joined ${formatWhen(u.createdAt)}'
+                  '${u.phone.isEmpty ? '' : ' · ${u.phone}'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.inkMuted,
+                  ),
+                ),
               ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Stacked, so a "super admin" and an "expired" pill no longer
+          // squeeze the name between them.
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
               StatusPill(
                 label: u.subscribed
                     ? u.plan
@@ -183,28 +228,20 @@ class _AdminUsersScreenState extends ConsumerState<AdminUsersScreen> {
                     ? StatusTone.danger
                     : StatusTone.neutral,
               ),
+              if (u.role != 'user') ...[
+                const SizedBox(height: 4),
+                StatusPill(
+                  label: u.role.replaceAll('_', ' '),
+                  tone: StatusTone.warning,
+                ),
+              ],
             ],
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Joined ${formatWhen(u.createdAt)}'
-                  '${u.phone.isEmpty ? '' : ' · ${u.phone}'}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppColors.inkFaint,
-                  ),
-                ),
-              ),
-              TextButton(
-                onPressed: () => _edit(u),
-                child: const Text('Edit'),
-              ),
-            ],
+          const SizedBox(width: 4),
+          const Icon(
+            Icons.chevron_right,
+            color: AppColors.inkMuted,
+            semanticLabel: 'Edit',
           ),
         ],
       ),
@@ -213,111 +250,273 @@ class _AdminUsersScreenState extends ConsumerState<AdminUsersScreen> {
 
   Future<void> _edit(AdminUserRow user) async {
     final viewer = ref.read(currentUserProvider);
-    // Only a super_admin may change a role; admin_update_user enforces this
-    // too, but hiding the control avoids offering an action that will fail.
     final canChangeRole = viewer?.role == UserRole.superAdmin;
 
-    final nameController = TextEditingController(text: user.name);
-    var role = user.role;
-    var subscribed = user.subscribed;
-    var plan = user.plan;
-
-    final saved = await showDialog<bool>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (_, setDialogState) => AlertDialog(
-          title: Text(user.name),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(labelText: 'Name'),
-                ),
-                const SizedBox(height: 14),
-                if (canChangeRole)
-                  DropdownButtonFormField<String>(
-                    initialValue: role,
-                    decoration: const InputDecoration(labelText: 'Role'),
-                    items: const [
-                      DropdownMenuItem(value: 'user', child: Text('User')),
-                      DropdownMenuItem(value: 'admin', child: Text('Admin')),
-                      DropdownMenuItem(
-                        value: 'super_admin',
-                        child: Text('Super admin'),
-                      ),
-                    ],
-                    onChanged: (v) => setDialogState(() => role = v ?? role),
-                  )
-                else
-                  Text(
-                    'Role: ${user.role} — only a super admin can change this.',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.inkMuted,
-                    ),
-                  ),
-                const SizedBox(height: 14),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: subscribed,
-                  title: const Text('Subscribed'),
-                  onChanged: (v) => setDialogState(() => subscribed = v),
-                ),
-                DropdownButtonFormField<String>(
-                  initialValue: plan,
-                  decoration: const InputDecoration(labelText: 'Plan'),
-                  items: const [
-                    DropdownMenuItem(value: 'free', child: Text('Free')),
-                    DropdownMenuItem(value: 'daily', child: Text('Daily')),
-                    DropdownMenuItem(value: 'weekly', child: Text('Weekly')),
-                    DropdownMenuItem(value: 'monthly', child: Text('Monthly')),
-                  ],
-                  onChanged: (v) => setDialogState(() => plan = v ?? plan),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
+      builder: (dialogContext) =>
+          _UserEditDialog(user: user, canChangeRole: canChangeRole),
     );
 
-    // Read before disposing — the update below used the controller after it
-    // had been torn down.
-    final newName = nameController.text.trim();
-    nameController.dispose();
-    if (saved != true) return;
+    if (result == null) return;
+
+    final newName = result['name'] as String?;
+    final role = result['role'] as String?;
+    final plan = result['plan'] as String;
+
+    // Access is one choice: Free, or a paid plan that starts now. Granting a
+    // plan used to keep the old expiry date, so for anyone whose plan had
+    // lapsed the grant was already expired the moment it was saved.
+    final planChanged = plan != _UserEditDialog.currentPlan(user);
 
     try {
       await ref
           .read(adminServiceProvider)
           .updateUser(
             userId: user.id,
-            name: newName.isEmpty ? null : newName,
+            name: newName == null || newName.isEmpty || newName == user.name
+                ? null
+                : newName,
             role: canChangeRole && role != user.role ? role : null,
-            isSubscribed: subscribed == user.subscribed ? null : subscribed,
-            plan: plan == user.plan ? null : plan,
+            isSubscribed: planChanged ? plan != 'free' : null,
+            plan: planChanged ? plan : null,
+            expiresAt: planChanged && plan != 'free'
+                ? _UserEditDialog.endsAt(plan, DateTime.now())
+                : null,
           );
       await _load(reset: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('User updated.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('User updated.')));
     } on Exception catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(errorMessage(e))));
     }
+  }
+}
+
+class _UserEditDialog extends StatefulWidget {
+  const _UserEditDialog({required this.user, required this.canChangeRole});
+
+  final AdminUserRow user;
+  final bool canChangeRole;
+
+  /// The plan the user has right now: a lapsed plan counts as Free.
+  static String currentPlan(AdminUserRow u) =>
+      u.subscribed && u.plan != 'free' ? u.plan : 'free';
+
+  /// When a plan granted at [from] ends. Mirrors subscription_expiry() in
+  /// the database: a month, 7 days, or a day.
+  static DateTime endsAt(String plan, DateTime from) => switch (plan) {
+    'monthly' => DateTime(
+      from.year,
+      from.month + 1,
+      from.day,
+      from.hour,
+      from.minute,
+    ),
+    'weekly' => from.add(const Duration(days: 7)),
+    _ => from.add(const Duration(days: 1)),
+  };
+
+  @override
+  State<_UserEditDialog> createState() => _UserEditDialogState();
+}
+
+class _UserEditDialogState extends State<_UserEditDialog> {
+  late final TextEditingController _nameController;
+  late String _role;
+  late String _plan;
+
+  static const _planLabels = {
+    'free': 'Free (no subscription)',
+    'daily': 'Daily · Ksh 20',
+    'weekly': 'Weekly · Ksh 100',
+    'monthly': 'Monthly · Ksh 200',
+  };
+
+  static const _months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.user.name);
+    _role = widget.user.role;
+    _plan = _UserEditDialog.currentPlan(widget.user);
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  static String _date(DateTime d) =>
+      '${d.day} ${_months[d.month - 1]} ${d.year}';
+
+  /// One line under the plan saying what saving will do, so nobody has to
+  /// guess whether a grant starts now or what happened to a lapsed plan.
+  String _planNote() {
+    final u = widget.user;
+    final current = _UserEditDialog.currentPlan(u);
+    if (_plan != current) {
+      return _plan == 'free'
+          ? 'Access ends when you save.'
+          : 'Starts when you save and ends '
+                '${_date(_UserEditDialog.endsAt(_plan, DateTime.now()))}.';
+    }
+    if (current != 'free' && u.expiresAt != null) {
+      return 'Active until ${_date(u.expiresAt!)}.';
+    }
+    if (u.isExpired && u.plan != 'free') {
+      return 'Their ${u.plan} plan ended ${_date(u.expiresAt!)}.';
+    }
+    return 'No active subscription.';
+  }
+
+  static String _roleName(String role) => switch (role) {
+    'super_admin' => 'Super admin',
+    'admin' => 'Admin',
+    _ => 'User',
+  };
+
+  Widget _label(String text) => Padding(
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Text(
+      text,
+      style: const TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+        color: AppColors.ink,
+      ),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final u = widget.user;
+    final contact = [u.email, if (u.phone.isNotEmpty) u.phone].join(' · ');
+
+    // Nearly full width on a phone, capped on wide screens. The default
+    // AlertDialog left about 200px for the form.
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.lg),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Edit user',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.ink,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                contact,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: AppColors.inkMuted,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 16),
+              _label('Name'),
+              TextField(
+                controller: _nameController,
+                textCapitalization: TextCapitalization.words,
+                style: const TextStyle(fontSize: 16),
+              ),
+              const SizedBox(height: 16),
+              _label('Role'),
+              if (widget.canChangeRole)
+                DropdownButtonFormField<String>(
+                  initialValue: _role,
+                  style: const TextStyle(fontSize: 16, color: AppColors.ink),
+                  items: [
+                    for (final r in const ['user', 'admin', 'super_admin'])
+                      DropdownMenuItem(value: r, child: Text(_roleName(r))),
+                  ],
+                  onChanged: (v) => setState(() => _role = v ?? _role),
+                )
+              else
+                Text(
+                  '${_roleName(u.role)}. Only a super admin can change roles.',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: AppColors.inkMuted,
+                  ),
+                ),
+              const SizedBox(height: 16),
+              _label('Plan'),
+              // One choice instead of a "Subscribed" switch plus a plan
+              // dropdown that could contradict each other.
+              DropdownButtonFormField<String>(
+                initialValue: _plan,
+                style: const TextStyle(fontSize: 16, color: AppColors.ink),
+                items: [
+                  for (final e in _planLabels.entries)
+                    DropdownMenuItem(value: e.key, child: Text(e.value)),
+                ],
+                onChanged: (v) => setState(() => _plan = v ?? _plan),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _planNote(),
+                style: const TextStyle(fontSize: 13, color: AppColors.inkMuted),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, null),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(context, {
+                        'name': _nameController.text.trim(),
+                        'role': _role,
+                        'plan': _plan,
+                      }),
+                      child: const Text('Save'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

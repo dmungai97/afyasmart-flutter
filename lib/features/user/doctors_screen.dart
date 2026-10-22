@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/errors.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../models/catalogue.dart';
+import '../../state/catalogue_cache.dart';
 import '../../state/providers.dart';
 import 'widgets/catalogue_widgets.dart';
 
@@ -45,6 +47,12 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
   bool _loading = true;
   bool _filtersLoading = true;
   bool _locked = false;
+  String? _error;
+
+  /// Bumped by every [_load]. A response whose number is no longer current
+  /// was overtaken by a newer filter or search and is dropped, so a slow
+  /// earlier request can never overwrite the list the user asked for last.
+  int _loadSeq = 0;
 
   String? _activeRegion;
   String? _activeSpec;
@@ -73,16 +81,26 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
   }
 
   Future<void> _loadFilters() async {
+    final cache = ref.read(catalogueCacheProvider);
+    if (cache.doctorFilters case final cached?) {
+      // The chip values barely change; one fetch per session is enough.
+      setState(() {
+        _regions = cached.regions;
+        _specializations = cached.specializations;
+        _filtersLoading = false;
+      });
+      return;
+    }
+
     try {
-      final service = ref.read(catalogueServiceProvider);
-      final results = await Future.wait([
-        service.regions(),
-        service.specializations(),
-      ]);
+      final filters = await ref.read(catalogueServiceProvider).doctorFilters();
+      if (filters.regions.isNotEmpty || filters.specializations.isNotEmpty) {
+        cache.doctorFilters = filters;
+      }
       if (!mounted) return;
       setState(() {
-        _regions = results[0];
-        _specializations = results[1];
+        _regions = filters.regions;
+        _specializations = filters.specializations;
       });
     } on Exception {
       // The chips are a convenience; a failure here must not block the list.
@@ -92,35 +110,80 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    final seq = ++_loadSeq;
+    final search = _search.text.trim().isEmpty ? null : _search.text.trim();
+    final coords = _nearMeOnly ? _coords : null;
+    final key = [
+      search,
+      _activeRegion,
+      _activeSpec,
+      if (coords != null) '${coords.lat},${coords.lng}',
+    ].join('|');
+
+    // A list already fetched for these filters shows at once; the request
+    // below then refreshes it without a spinner.
+    final cache = ref.read(catalogueCacheProvider);
+    final cached = cache.doctors[key];
+    setState(() {
+      _error = null;
+      if (cached != null) {
+        _doctors = cached;
+        _locked = false;
+      }
+      _loading = cached == null;
+    });
+
     try {
       final results = await ref
           .read(catalogueServiceProvider)
           .nearbyDoctors(
-            search: _search.text.trim().isEmpty ? null : _search.text.trim(),
+            search: search,
             region: _activeRegion,
             specialization: _activeSpec,
-            lat: _nearMeOnly ? _coords?.lat : null,
-            lng: _nearMeOnly ? _coords?.lng : null,
-            radius: _nearMeOnly ? _nearMeRadiusKm : null,
+            lat: coords?.lat,
+            lng: coords?.lng,
+            radius: coords == null ? null : _nearMeRadiusKm,
           );
-      if (!mounted) return;
+      cache.doctors[key] = results;
+      if (!mounted || seq != _loadSeq) return;
       setState(() {
         _doctors = results;
         _locked = false;
       });
     } on PaywallException {
-      if (!mounted) return;
+      if (!mounted || seq != _loadSeq) return;
       setState(() {
         _doctors = const [];
         _locked = true;
       });
-    } on Exception {
-      if (!mounted) return;
-      setState(() => _doctors = const []);
+    } on Exception catch (e) {
+      if (!mounted || seq != _loadSeq) return;
+      // A failed refresh keeps the list already on screen; offline, the
+      // banner says why.
+      if (cached != null) {
+        if (!isNetworkError(e)) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(errorMessage(e))));
+        }
+        return;
+      }
+      setState(() {
+        _doctors = const [];
+        _error = errorMessage(e);
+      });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && seq == _loadSeq) setState(() => _loading = false);
     }
+  }
+
+  /// Retries the list, and the filter chips too if those failed as well.
+  void _retry() {
+    if (_regions.isEmpty && _specializations.isEmpty) {
+      setState(() => _filtersLoading = true);
+      _loadFilters();
+    }
+    _load();
   }
 
   /// Near Me needs a fix before it can filter, so permission is requested on
@@ -133,35 +196,46 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
       return;
     }
 
+    ({double lat, double lng})? coords;
     try {
       var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Location permission is needed to sort by distance.'),
-          ),
-        );
-        return;
-      }
 
-      final position = await Geolocator.getCurrentPosition();
-      if (!mounted) return;
-      setState(() {
-        _coords = (lat: position.latitude, lng: position.longitude);
-        _nearMeOnly = true;
-      });
-      await _load();
-    } on Exception {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not determine your location.')),
-      );
+      final isGranted = permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always;
+
+      if (isGranted) {
+        final position = await Geolocator.getCurrentPosition().timeout(
+          const Duration(seconds: 8),
+        );
+        coords = (lat: position.latitude, lng: position.longitude);
+      }
+    } on Object {
+      // Denied, services off, or no fix in time — handled below.
     }
+
+    if (!mounted) return;
+    if (coords == null) {
+      // Sorting by distance from somewhere that is not the user would be
+      // worse than not sorting at all, so Near Me stays off.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not get your location. Check that location is on and '
+            'allowed for AfyaSmart.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _coords = coords;
+      _nearMeOnly = true;
+    });
+    await _load();
   }
 
   Future<void> _clearFilters() async {
@@ -218,22 +292,52 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
                 ? const Center(
                     child: CircularProgressIndicator(color: AppColors.brand),
                   )
+                : _error != null
+                ? SingleChildScrollView(
+                    child: CatalogueError(message: _error!, onRetry: _retry),
+                  )
                 : _doctors.isEmpty
                 ? SingleChildScrollView(
                     child: CatalogueEmpty(
                       locked: _locked,
                       lockedMessage: 'Subscribe to view doctors near you',
-                      emptyMessage: 'No doctors found',
+                      emptyMessage: _nearMeOnly
+                          ? 'No doctors within ${_nearMeRadiusKm.toInt()} km'
+                          : 'No doctors found',
                       emptyIcon: '🩺',
                       onClearFilters: _hasActiveFilters ? _clearFilters : null,
                     ),
                   )
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    itemCount: _doctors.length,
-                    itemBuilder: (_, i) => _card(_doctors[i]),
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isWide = constraints.maxWidth >= 768;
+
+                      return Align(
+                        alignment: Alignment.topCenter,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 1100),
+                          child: isWide
+                              ? GridView.builder(
+                                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: 2,
+                                    mainAxisExtent: 135,
+                                    crossAxisSpacing: 12,
+                                    mainAxisSpacing: 12,
+                                  ),
+                                  itemCount: _doctors.length,
+                                  itemBuilder: (_, i) => _card(_doctors[i]),
+                                )
+                              : ListView.builder(
+                                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                                  keyboardDismissBehavior:
+                                      ScrollViewKeyboardDismissBehavior.onDrag,
+                                  itemCount: _doctors.length,
+                                  itemBuilder: (_, i) => _card(_doctors[i]),
+                                ),
+                        ),
+                      );
+                    },
                   ),
           ),
         ],
@@ -310,23 +414,23 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 48,
-          height: 48,
-          decoration: const BoxDecoration(
-            color: AppColors.brand,
-            shape: BoxShape.circle,
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: AppColors.brand.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(14),
           ),
           alignment: Alignment.center,
           child: Text(
             _initials(d.name),
             style: const TextStyle(
-              color: Colors.white,
+              color: AppColors.brand,
               fontSize: 15,
               fontWeight: FontWeight.w700,
             ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 14),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -352,23 +456,40 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
                     ),
                     decoration: BoxDecoration(
                       color: d.available
-                          ? AppPalette.greenBg
-                          : AppPalette.redBg,
+                          ? const Color(0xFFECFDF5)
+                          : const Color(0xFFFEF2F2),
                       borderRadius: BorderRadius.circular(Radii.pill),
                     ),
-                    child: Text(
-                      d.available ? 'Available' : 'Unavailable',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: d.available
-                            ? AppPalette.green
-                            : AppPalette.red,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: d.available
+                                ? const Color(0xFF059669)
+                                : const Color(0xFFEF4444),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          d.available ? 'Available' : 'Unavailable',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: d.available
+                                ? const Color(0xFF059669)
+                                : const Color(0xFFEF4444),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
+              const SizedBox(height: 2),
               Text(
                 d.specialization,
                 style: const TextStyle(
@@ -384,7 +505,7 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
                   color: AppPalette.textMuted,
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               Row(
                 children: [
                   Text(
@@ -409,19 +530,31 @@ class _DoctorsScreenState extends ConsumerState<DoctorsScreen> {
                   if (d.distanceKm != null)
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 7,
-                        vertical: 2,
+                        horizontal: 8,
+                        vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: AppPalette.hairline,
+                        color: const Color(0xFFF1F5F9),
                         borderRadius: BorderRadius.circular(Radii.pill),
                       ),
-                      child: Text(
-                        '📍 ${d.distanceKm} km',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: AppPalette.textBody,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.location_on_outlined,
+                            size: 12,
+                            color: AppColors.brand,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${d.distanceKm} km',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppPalette.textStrong,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                 ],

@@ -1,35 +1,26 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/brand.dart';
 import '../../core/router.dart';
 import '../../core/theme.dart';
+import '../../state/diagnosis_controller.dart';
 import 'widgets/vitals_rule.dart';
 
 /// Port of src/onboarding/screens/WelcomeScreen.tsx.
-class WelcomeScreen extends StatefulWidget {
+class WelcomeScreen extends ConsumerStatefulWidget {
   const WelcomeScreen({super.key});
 
   @override
-  State<WelcomeScreen> createState() => _WelcomeScreenState();
+  ConsumerState<WelcomeScreen> createState() => _WelcomeScreenState();
 }
-
-/// A few recognizable, real institutions to name-drop instead of a generic
-/// "trusted by Kenyans" badge — filtered against the same seed data the app
-/// ships with, so the names stay accurate as that data changes.
-const _featuredHospitals = [
-  'Kenyatta National Hospital',
-  'Aga Khan University Hospital',
-  'Nairobi Hospital',
-];
 
 const _features = [
   (
     icon: Icons.monitor_heart_outlined,
     title: 'Symptom checker',
-    desc: 'Understand your health in 60 seconds',
+    desc: 'Answer a few questions about how you feel',
   ),
   (
     icon: Icons.chat_bubble_outline,
@@ -39,23 +30,16 @@ const _features = [
   (
     icon: Icons.medical_services_outlined,
     title: 'Drug information',
-    desc: 'Verify dosages, side effects and details',
+    desc: 'Check dosages, side effects and details',
   ),
   (
     icon: Icons.location_on_outlined,
     title: 'Local services',
-    desc: 'Locate clinics and specialists near you',
+    desc: 'Find clinics, pharmacies and doctors near you',
   ),
 ];
 
-class _Counts {
-  const _Counts(this.doctors, this.pharmacies, this.hospitals);
-  final int doctors;
-  final int pharmacies;
-  final List<String> hospitals;
-}
-
-class _WelcomeScreenState extends State<WelcomeScreen>
+class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
     with TickerProviderStateMixin {
   late final AnimationController _intro = AnimationController(
     vsync: this,
@@ -67,11 +51,16 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     duration: const Duration(milliseconds: 480),
   );
 
-  late final Future<_Counts> _counts = _loadCounts();
-
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_intro.isAnimating || _intro.isCompleted) return;
+    // With system animations off, show everything in place at once.
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _intro.value = 1;
+      _list.value = 1;
+      return;
+    }
     _intro.forward().then((_) {
       if (mounted) _list.forward();
     });
@@ -84,30 +73,6 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     super.dispose();
   }
 
-  /// The RN screen `require()`d the seed JSON synchronously at module load.
-  /// Flutter assets are async, so the counts resolve through a FutureBuilder
-  /// and the strip simply renders empty until they land.
-  Future<_Counts> _loadCounts() async {
-    try {
-      final doctorsRaw = await rootBundle.loadString('assets/seed/doctors.json');
-      final pharmaciesRaw = await rootBundle.loadString(
-        'assets/seed/pharmacies.json',
-      );
-
-      final doctors = (jsonDecode(doctorsRaw) as List)
-          .cast<Map<String, dynamic>>();
-      final pharmacies = jsonDecode(pharmaciesRaw) as List;
-
-      final hospitals = _featuredHospitals
-          .where((h) => doctors.any((d) => d['hospital'] == h))
-          .toList();
-
-      return _Counts(doctors.length, pharmacies.length, hospitals);
-    } on Object {
-      return const _Counts(0, 0, []);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final fade = CurvedAnimation(parent: _intro, curve: Curves.easeOut);
@@ -116,104 +81,67 @@ class _WelcomeScreenState extends State<WelcomeScreen>
       end: Offset.zero,
     ).animate(fade);
 
+    // Content reads top-down; the actions sit at the bottom, in thumb reach,
+    // and only scroll with the rest on short screens or large text.
     return Scaffold(
       backgroundColor: AppColors.paper,
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                FadeTransition(
-                  opacity: fade,
-                  child: SlideTransition(
-                    position: slide,
-                    child: _hero(),
-                  ),
+        child: CustomScrollView(
+          slivers: [
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  Insets.lg,
+                  Insets.xl,
+                  Insets.lg,
+                  Insets.md,
                 ),
-                const SizedBox(height: 32),
-                _featureList(),
-                const SizedBox(height: 28),
-                FutureBuilder<_Counts>(
-                  future: _counts,
-                  builder: (context, snap) {
-                    final counts = snap.data;
-                    return FadeTransition(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    FadeTransition(
                       opacity: fade,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (counts != null) _trustStrip(counts),
-                          if (counts != null && counts.hospitals.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 12),
-                              child: Text(
-                                'Network includes '
-                                '${counts.hospitals.join(", ")} and more nationwide',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: AppColors.inkFaint,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    );
-                  },
+                      child: SlideTransition(position: slide, child: _hero()),
+                    ),
+                    const SizedBox(height: Insets.xl),
+                    _featureList(),
+                    const SizedBox(height: Insets.lg),
+                    FadeTransition(opacity: fade, child: _trust()),
+                    const Spacer(),
+                    const SizedBox(height: Insets.lg),
+                    FadeTransition(opacity: fade, child: _cta(context)),
+                  ],
                 ),
-                const SizedBox(height: 24),
-                FadeTransition(
-                  opacity: fade,
-                  child: SlideTransition(position: slide, child: _cta(context)),
-                ),
-              ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _hero() => Column(
+  /// The promise is the headline; the wordmark is a label above it.
+  Widget _hero() => const Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const VitalsRule(),
-      const SizedBox(height: 24),
-      const Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(text: 'Afya'),
-            TextSpan(text: 'Smart', style: TextStyle(color: AppColors.accent)),
-          ],
-        ),
+      Wordmark(),
+      SizedBox(height: Insets.md),
+      VitalsRule(),
+      SizedBox(height: Insets.md),
+      Text(
+        'Find out what your symptoms mean in 60 seconds',
         style: TextStyle(
           color: AppColors.ink,
-          fontSize: 32,
+          fontSize: 28,
           fontWeight: FontWeight.w600,
-          letterSpacing: 0.2,
+          height: 1.25,
         ),
       ),
-      const SizedBox(height: 10),
-      const Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(text: 'Find out what your symptoms mean in '),
-            TextSpan(
-              text: '60 seconds',
-              style: TextStyle(
-                color: AppColors.ink,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-        style: TextStyle(
-          color: AppColors.inkMuted,
-          fontSize: 16,
-          height: 1.5,
-        ),
+      SizedBox(height: Insets.sm),
+      Text(
+        'Free health check-in, then guidance on what to do next.',
+        style: TextStyle(color: AppColors.inkMuted, fontSize: 16, height: 1.5),
       ),
     ],
   );
@@ -257,105 +185,96 @@ class _WelcomeScreenState extends State<WelcomeScreen>
         decoration: const BoxDecoration(
           border: Border(bottom: BorderSide(color: AppColors.rule)),
         ),
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Structure comes from thin rule lines, not cards.
-              Container(width: 2, color: AppColors.ruleStrong),
-              const SizedBox(width: 12),
-              Icon(f.icon, size: 18, color: AppColors.ink),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      f.title,
-                      style: const TextStyle(
-                        color: AppColors.ink,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(f.icon, size: 22, color: AppColors.brand),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    f.title,
+                    style: const TextStyle(
+                      color: AppColors.ink,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      f.desc,
-                      style: const TextStyle(
-                        color: AppColors.inkMuted,
-                        fontSize: 12,
-                        height: 1.4,
-                      ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    f.desc,
+                    style: const TextStyle(
+                      color: AppColors.inkMuted,
+                      fontSize: 14,
+                      height: 1.4,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
 
-  Widget _trustStrip(_Counts counts) => Wrap(
-    crossAxisAlignment: WrapCrossAlignment.center,
-    spacing: 6,
-    runSpacing: 4,
+  /// No directory counts or hospital names here: small numbers undercut
+  /// trust, and naming real institutions implies a partnership we don't have.
+  Widget _trust() => const Row(
     children: [
-      const Icon(
-        Icons.verified_user_outlined,
-        size: 14,
-        color: AppColors.inkFaint,
-      ),
-      _trustNumber('${counts.doctors}+ doctors'),
-      const Text('·', style: TextStyle(color: AppColors.ruleStrong)),
-      _trustNumber('${counts.pharmacies}+ pharmacies'),
-      const Text('·', style: TextStyle(color: AppColors.ruleStrong)),
-      const Text(
+      Icon(Icons.verified_user_outlined, size: 16, color: AppColors.inkMuted),
+      SizedBox(width: 6),
+      Text(
         'Private and secure',
-        style: TextStyle(color: AppColors.inkFaint, fontSize: 12),
+        style: TextStyle(color: AppColors.inkMuted, fontSize: 13),
       ),
     ],
   );
 
-  Widget _trustNumber(String text) => Text(
-    text,
-    style: const TextStyle(
-      color: AppColors.ink,
-      fontSize: 12,
-      fontWeight: FontWeight.w600,
-      fontFeatures: [FontFeature.tabularFigures()],
-    ),
-  );
-
+  // Sizes and shape come from the theme's button styles, so this matches
+  // every other primary action in the app.
   Widget _cta(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      SizedBox(
-        width: double.infinity,
-        child: FilledButton(
-          onPressed: () => context.push(Routes.healthCheck),
-          style: FilledButton.styleFrom(
-            backgroundColor: AppColors.ink,
-            foregroundColor: AppColors.paper,
-            padding: const EdgeInsets.symmetric(vertical: 15),
-            shape: const StadiumBorder(),
-          ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+      FilledButton.icon(
+        onPressed: () async {
+          await ref.read(diagnosisControllerProvider.notifier).clearAll();
+          if (!context.mounted) return;
+          context.go(Routes.healthCheck);
+        },
+        iconAlignment: IconAlignment.end,
+        icon: const Icon(Icons.arrow_forward, size: 20),
+        label: const Text('Start your check-in'),
+      ),
+      const SizedBox(height: Insets.sm),
+      TextButton(
+        onPressed: () => context.go(Routes.login),
+        style: TextButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        child: const Text.rich(
+          TextSpan(
+            text: 'Already have an account? ',
+            style: TextStyle(color: AppColors.inkMuted),
             children: [
-              Text(
-                'Start your check-in',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              TextSpan(
+                text: 'Sign in',
+                style: TextStyle(
+                  color: AppColors.ink,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-              SizedBox(width: 8),
-              Icon(Icons.arrow_forward, size: 18),
             ],
           ),
+          style: TextStyle(fontSize: 15),
         ),
       ),
-      const SizedBox(height: 10),
+      const SizedBox(height: Insets.xs),
       const Text(
-        'Not a replacement for professional medical advice',
+        'Not a replacement for professional medical advice.',
         textAlign: TextAlign.center,
-        style: TextStyle(color: AppColors.inkFaint, fontSize: 11),
+        style: TextStyle(color: AppColors.inkMuted, fontSize: 12),
       ),
     ],
   );

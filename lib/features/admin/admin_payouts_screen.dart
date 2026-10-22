@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/errors.dart';
 import '../../core/theme.dart';
 import '../../models/admin.dart';
 import '../../state/admin_controller.dart';
@@ -155,11 +156,14 @@ class AdminPayoutsScreen extends ConsumerWidget {
       ref.invalidate(adminPayoutsProvider);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(approve ? 'Payout marked paid.' : 'Payout rejected.')),
+        SnackBar(
+          content: Text(approve ? 'Payout marked paid.' : 'Payout rejected.'),
+        ),
       );
     } on Exception catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(errorMessage(e))));
     }
   }
 }

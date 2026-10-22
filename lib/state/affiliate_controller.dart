@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/errors.dart';
 import '../services/affiliate_service.dart';
 import 'providers.dart';
 
@@ -35,7 +36,7 @@ class AffiliateController extends AsyncNotifier<AffiliateSummary> {
       await reload();
       return null;
     } on Exception catch (e) {
-      return e.toString();
+      return errorMessage(e);
     }
   }
 
@@ -57,7 +58,7 @@ class AffiliateController extends AsyncNotifier<AffiliateSummary> {
       await reload();
       return null;
     } on Exception catch (e) {
-      return e.toString();
+      return errorMessage(e);
     }
   }
 }

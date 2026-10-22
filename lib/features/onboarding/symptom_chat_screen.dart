@@ -17,7 +17,11 @@ class SymptomChatScreen extends ConsumerStatefulWidget {
 }
 
 class _Message {
-  const _Message({required this.fromUser, required this.text, this.typing = false});
+  const _Message({
+    required this.fromUser,
+    required this.text,
+    this.typing = false,
+  });
 
   final bool fromUser;
   final String text;
@@ -31,7 +35,17 @@ class _Message {
 /// hides the chip row while the next step loads.
 enum _Stage { symptom, clarify, duration, gender, busy }
 
-const _durationOptions = ['Today', '1-3 days', '4-7 days', 'Longer than a week'];
+const _durationOptions = [
+  'Today',
+  '1-3 days',
+  '4-7 days',
+  'Longer than a week',
+];
+
+/// Says what is being asked and why; "which best describes you?" did neither.
+const _genderQuestion =
+    'Last question: are you female or male? Some conditions are more '
+    'common in one or the other.';
 
 const _genderOptions = [
   (label: 'Female', value: 'female'),
@@ -43,9 +57,12 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
   final _messages = <_Message>[
     const _Message(
       fromUser: false,
+      // Not "Doctor Assistant": no doctor is involved, and a health app
+      // should not let anyone think one is.
       text:
-          "Hi 👋 I'm your AfyaSmart Doctor Assistant.\n\n"
-          "I'll help you understand what your symptoms might mean. "
+          "Hi, I'm the AfyaSmart health assistant.\n\n"
+          "I'm not a doctor, but I can help you understand what your "
+          "symptoms might mean and what to do next. "
           "What are you experiencing today?",
     ),
   ];
@@ -60,18 +77,32 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
   String? _currentQuestion;
   List<String> _currentOptions = const [];
 
-  /// Counts consecutive too-short submissions so the "tell me a bit more"
-  /// nudge only ever shows once. Without this, someone who keeps typing
-  /// short answers gets the identical canned message appended again on every
+  /// Counts consecutive vague submissions so the "tell me a bit more" nudge
+  /// only ever shows once. Without this, someone who keeps typing vague
+  /// answers gets the identical canned message appended again on every
   /// attempt, which reads as the chat being stuck rather than nudging.
-  int _shortAttempts = 0;
+  int _vagueAttempts = 0;
 
-  /// A one- or two-word description ("sick", "not well") still reaches the AI
-  /// analysis step and comes back looking like a confident, specific
-  /// diagnosis — the model is not trained to say "I don't have enough to go
-  /// on". Catching it here, before it ever reaches the AI, is more reliable
-  /// than hoping the model hedges appropriately.
-  static const _minSymptomWords = 3;
+  /// A description with nothing specific in it ("sick", "not well") reaches
+  /// the AI analysis step and comes back looking like a confident, specific
+  /// diagnosis, so it is caught here first. This used to be a word count,
+  /// which also stopped short but perfectly good answers like "shoulder
+  /// aches" or "headache"; the AI's follow-up questions handle those.
+  static final _vague = RegExp(
+    r"^(i'?m |i am |i feel |feeling |am )?"
+    r'(sick|ill|unwell|not (feeling )?(well|good|ok|okay|fine)|'
+    r'pain|in pain|aches?|bad|help|mgonjwa|naumwa|nimeugua|'
+    r'sijisikii vizuri|si poa)[\s!.,?]*$',
+    caseSensitive: false,
+  );
+
+  /// "Hi" is a greeting, not a symptom: it gets a greeting back and never
+  /// counts as the one short answer that is let through to the AI.
+  static final _greeting = RegExp(
+    r'^(hi+|hey+|hello+|helo|hallo|good (morning|afternoon|evening)|'
+    r'habari( yako)?|jambo|hujambo|mambo|sasa|niaje|salaam?|vipi)[\s!.,?]*$',
+    caseSensitive: false,
+  );
 
   @override
   void dispose() {
@@ -98,7 +129,9 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
 
   void _showTyping() {
     setState(
-      () => _messages.add(const _Message(fromUser: false, text: '', typing: true)),
+      () => _messages.add(
+        const _Message(fromUser: false, text: '', typing: true),
+      ),
     );
     _scrollToBottom();
   }
@@ -124,11 +157,17 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
           symptom: symptom,
           age: HealthCheckMapping.age(answers),
           severity: HealthCheckMapping.severity(answers),
+          feeling: answers?.feeling,
+          concern: answers?.concern,
           history: history,
         );
 
     if (!mounted) return;
     _hideTyping();
+
+    // The AI's acknowledgement of what they just said, or a plain fallback
+    // when the clarify call was unavailable.
+    final ack = result.ack ?? 'Got it.';
 
     if (!result.done) {
       final question = result.question ?? 'Can you tell me a bit more?';
@@ -137,28 +176,33 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
         _currentOptions = result.options ?? const [];
         _stage = _Stage.clarify;
       });
-      _append([_Message(fromUser: false, text: question)]);
+      // One bubble, like the later steps: two in a row read as choppy.
+      _append([
+        _Message(
+          fromUser: false,
+          text: result.ack == null ? question : '${result.ack} $question',
+        ),
+      ]);
       return;
     }
 
-    if (result.duration != null) {
+    // "Not specified" is the model saying it could not tell, so ask.
+    final duration = result.duration == 'Not specified'
+        ? null
+        : result.duration;
+
+    if (duration != null) {
       setState(() {
-        _durationAnswer = result.duration;
+        _durationAnswer = duration;
         _stage = _Stage.gender;
       });
       _append([
-        const _Message(
-          fromUser: false,
-          text: 'Got it. And which best describes you?',
-        ),
+        _Message(fromUser: false, text: '$ack $_genderQuestion'),
       ]);
     } else {
       setState(() => _stage = _Stage.duration);
       _append([
-        const _Message(
-          fromUser: false,
-          text: 'Got it. How long have you had this?',
-        ),
+        _Message(fromUser: false, text: '$ack How long have you had this?'),
       ]);
     }
   }
@@ -167,12 +211,25 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
     final text = _input.text.trim();
     if (text.isEmpty || _stage != _Stage.symptom) return;
 
-    final wordCount = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+    if (_greeting.hasMatch(text)) {
+      _input.clear();
+      _append([
+        _Message(fromUser: true, text: text),
+        const _Message(
+          fromUser: false,
+          text:
+              "Hello! What's bothering you today? Describe it in your own "
+              'words, for example "headache since yesterday" or '
+              '"stomach pain after eating".',
+        ),
+      ]);
+      return;
+    }
 
-    if (wordCount < _minSymptomWords && _shortAttempts == 0) {
-      // Nudge once. If they submit another short answer right after, don't
+    if (_vague.hasMatch(text) && _vagueAttempts == 0) {
+      // Nudge once. If they submit another vague answer right after, don't
       // repeat the identical message — just proceed with it.
-      _shortAttempts++;
+      _vagueAttempts++;
       _input.clear();
       _append([
         _Message(fromUser: true, text: text),
@@ -180,15 +237,15 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
           fromUser: false,
           text:
               'Could you tell me a bit more? For example, where it hurts, '
-              'what it feels like, or when it started — a few more details '
-              'helps me give you a more useful analysis.',
+              'what it feels like, or when it started. A few more details '
+              'help me give you a more useful answer.',
         ),
       ]);
       // Stage stays 'symptom' — the composer remains open for another try.
       return;
     }
 
-    _shortAttempts = 0;
+    _vagueAttempts = 0;
     _input.clear();
     setState(() {
       _symptomText = text;
@@ -210,6 +267,14 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
     await _runClarifyStep(_symptomText, List.of(_clarifyHistory));
   }
 
+  /// A typed answer to the AI's question, for when none of the options fit.
+  Future<void> _sendClarifyText() async {
+    final text = _input.text.trim();
+    if (text.isEmpty || _stage != _Stage.clarify) return;
+    _input.clear();
+    await _pickClarify(text);
+  }
+
   Future<void> _pickDuration(String option) async {
     setState(() {
       _durationAnswer = option;
@@ -224,7 +289,7 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
 
     setState(() => _stage = _Stage.gender);
     _append([
-      const _Message(fromUser: false, text: 'And which best describes you?'),
+      const _Message(fromUser: false, text: _genderQuestion),
     ]);
   }
 
@@ -269,7 +334,7 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
 
     await Future<void>.delayed(const Duration(milliseconds: 700));
     if (!mounted) return;
-    context.push(Routes.analysisLoading);
+    context.go(Routes.analysisLoading);
   }
 
   @override
@@ -284,7 +349,7 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
         child: Column(
           children: [
             OnboardingHeader(
-              title: 'AfyaSmart Doctor Assistant',
+              title: 'Symptom check',
               onBack: () => context.canPop()
                   ? context.pop()
                   : context.go(Routes.healthCheck),
@@ -336,8 +401,19 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
   /// The footer is one of: the free-text composer, a chip row, or nothing
   /// while a step is in flight.
   Widget _footer() => switch (_stage) {
-    _Stage.symptom => _composer(),
-    _Stage.clarify => _chips(_currentOptions, _pickClarify),
+    _Stage.symptom => _composer(
+      onSend: _sendSymptom,
+      hint: 'Describe how you feel…',
+    ),
+    // Options for a quick tap, plus the composer for an answer that none of
+    // them fits.
+    _Stage.clarify => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _chips(_currentOptions, _pickClarify),
+        _composer(onSend: _sendClarifyText, hint: 'Or type your answer…'),
+      ],
+    ),
     _Stage.duration => _chips(_durationOptions, _pickDuration),
     _Stage.gender => _chips(
       _genderOptions.map((g) => g.label).toList(),
@@ -364,16 +440,16 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
               OutlinedButton(
                 onPressed: () => onPick(option),
                 style: OutlinedButton.styleFrom(
-                  minimumSize: Size.zero,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
+                  // 44px tall: these are the main way to answer, so they
+                  // need a full-size tap target.
+                  minimumSize: const Size(0, 44),
+                  tapTargetSize: MaterialTapTargetSize.padded,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   side: const BorderSide(color: AppColors.ruleStrong),
                   shape: const StadiumBorder(),
                   foregroundColor: AppColors.ink,
                   textStyle: const TextStyle(
-                    fontSize: 13,
+                    fontSize: 15,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -383,7 +459,10 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
         ),
       );
 
-  Widget _composer() => Container(
+  Widget _composer({
+    required Future<void> Function() onSend,
+    required String hint,
+  }) => Container(
     padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
     decoration: const BoxDecoration(
       border: Border(top: BorderSide(color: AppColors.rule)),
@@ -397,16 +476,13 @@ class _SymptomChatScreenState extends ConsumerState<SymptomChatScreen> {
             minLines: 1,
             maxLines: 4,
             textInputAction: TextInputAction.send,
-            onSubmitted: (_) => _sendSymptom(),
-            decoration: const InputDecoration(
-              hintText: 'Describe how you feel…',
-              isDense: true,
-            ),
+            onSubmitted: (_) => onSend(),
+            decoration: InputDecoration(hintText: hint, isDense: true),
           ),
         ),
         const SizedBox(width: 10),
         IconButton.filled(
-          onPressed: _sendSymptom,
+          onPressed: onSend,
           style: IconButton.styleFrom(
             backgroundColor: AppColors.ink,
             foregroundColor: AppColors.paper,

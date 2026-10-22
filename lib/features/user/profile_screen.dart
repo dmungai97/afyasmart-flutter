@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
+import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../state/auth_controller.dart';
 
@@ -57,6 +60,49 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     // The router's redirect handles where to go once the session is gone.
   }
 
+  /// Opens the Play Store listing, in the Play Store app when there is one.
+  /// The package id is com.afyasmart.app (see android/app/build.gradle.kts).
+  Future<void> _rateApp() async {
+    const storeApp = 'market://details?id=com.afyasmart.app';
+    const storeWeb =
+        'https://play.google.com/store/apps/details?id=com.afyasmart.app';
+
+    final opened =
+        await _tryLaunch(storeApp) || await _tryLaunch(storeWeb);
+    if (!opened && mounted) _notBuilt('Rating');
+  }
+
+  static Future<bool> _tryLaunch(String url) async {
+    try {
+      return await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+    } on Exception {
+      return false;
+    }
+  }
+
+  Future<void> _deleteAccount() async {
+    // Captured up front: the app-level messenger outlives this screen, which
+    // the router tears down as soon as the session is cleared.
+    final messenger = ScaffoldMessenger.of(context);
+
+    final deleted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _DeleteAccountDialog(),
+    );
+
+    if (deleted == true) {
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text('Your account has been deleted.')),
+        );
+    }
+  }
+
   /// Several menu rows had no handler in the RN screen — tapping them did
   /// nothing at all. Rather than ship silent controls or delete rows and
   /// gut the screen, they say so.
@@ -88,19 +134,19 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             icon: Icons.person_outline,
             label: 'Personal Information',
             sub: 'Name, email, phone',
-            onTap: null,
+            onTap: () => context.push(Routes.personalInfo),
           ),
           (
             icon: Icons.lock_outline,
             label: 'Change Password',
             sub: 'Update your password',
-            onTap: null,
+            onTap: () => context.push(Routes.changePassword),
           ),
           (
             icon: Icons.notifications_outlined,
             label: 'Notifications',
             sub: 'Manage alerts',
-            onTap: null,
+            onTap: () => context.push(Routes.notifications),
           ),
         ],
       ),
@@ -111,7 +157,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             icon: Icons.description_outlined,
             label: 'Medical History',
             sub: 'Your health records',
-            onTap: null,
+            onTap: () => context.push(Routes.medicalHistory),
           ),
           (
             icon: Icons.credit_card,
@@ -125,7 +171,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             icon: Icons.receipt_long_outlined,
             label: 'Payment History',
             sub: 'View transactions',
-            onTap: null,
+            onTap: () => context.push(Routes.paymentHistory),
           ),
         ],
       ),
@@ -136,25 +182,25 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             icon: Icons.help_outline,
             label: 'Help & Support',
             sub: 'Get assistance',
-            onTap: null,
+            onTap: () => context.push(Routes.helpSupport),
           ),
           (
             icon: Icons.verified_user_outlined,
             label: 'Privacy Policy',
             sub: 'How we use your data',
-            onTap: null,
+            onTap: () => context.push(Routes.privacyPolicy),
           ),
           (
             icon: Icons.article_outlined,
             label: 'Terms & Conditions',
             sub: 'Read our terms',
-            onTap: null,
+            onTap: () => context.push(Routes.termsConditions),
           ),
           (
             icon: Icons.star_outline,
             label: 'Rate AfyaSmart',
             sub: 'Share your feedback',
-            onTap: null,
+            onTap: _rateApp,
           ),
         ],
       ),
@@ -169,90 +215,122 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
         ],
       ),
+      if (user?.isAdmin == true)
+        (
+          'Admin',
+          [
+            (
+              icon: Icons.admin_panel_settings_outlined,
+              label: 'Admin Console',
+              sub: 'Manage users, facilities, transactions, payouts',
+              onTap: () => context.go(Routes.admin),
+            ),
+          ],
+        ),
     ];
 
-    return Container(
-      color: const Color(0xFFF5F7FA),
-      child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          _header(),
-          Transform.translate(
-            offset: const Offset(0, -36),
-            child: Column(
-              children: [
-                _profileCard(user?.name ?? 'User', user?.email ?? '',
-                    user?.phone, initials.isEmpty ? 'U' : initials),
-                const SizedBox(height: 20),
-                for (final (title, items) in sections) ...[
-                  _section(title, items),
-                  const SizedBox(height: 16),
-                ],
-                _logoutButton(),
-                const SizedBox(height: 28),
-              ],
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.brand, AppColors.accent],
             ),
+          ),
+        ),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: const Text(
+          'Profile',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined, color: Colors.white),
+            onPressed: () => context.push(Routes.personalInfo),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          Container(
+            height: 140,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [AppColors.brand, AppColors.accent],
+              ),
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
+            ),
+          ),
+          ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            children: [
+              _profileCard(user?.name ?? 'User', user?.email ?? '',
+                  user?.phone, initials.isEmpty ? 'U' : initials, user?.isSubscribed ?? false, user?.chatCount ?? 0),
+              const SizedBox(height: 24),
+              for (final (_, items) in sections) ...[
+                _section(items),
+                const SizedBox(height: 16),
+              ],
+              const SizedBox(height: 16),
+              _logoutButton(),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: _deleteAccount,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppPalette.textMuted,
+                ),
+                child: const Text('Delete account'),
+              ),
+              const SizedBox(height: 40),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _header() => Container(
-    color: AppColors.brand,
-    padding: EdgeInsets.fromLTRB(
-      20,
-      MediaQuery.viewPaddingOf(context).top + 16,
-      20,
-      56,
-    ),
-    child: const Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          'Profile',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 22,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        Icon(Icons.settings_outlined, size: 22, color: Colors.white),
-      ],
-    ),
-  );
-
-  Widget _profileCard(String name, String email, String? phone, String initials) =>
+  Widget _profileCard(String name, String email, String? phone, String initials, bool isSubscribed, int chatCount) =>
       Container(
-        margin: const EdgeInsets.symmetric(horizontal: 20),
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(24),
           border: Border.all(color: AppPalette.hairline),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0A000000),
+              blurRadius: 10,
+              offset: Offset(0, 4),
+            ),
+          ],
         ),
         child: Column(
           children: [
             Row(
               children: [
-                Container(
-                  width: 58,
-                  height: 58,
-                  decoration: const BoxDecoration(
-                    color: AppColors.brand,
-                    shape: BoxShape.circle,
-                  ),
-                  alignment: Alignment.center,
+                CircleAvatar(
+                  radius: 36,
+                  backgroundColor: AppColors.brand,
                   child: Text(
                     initials,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 20,
+                      fontSize: 26,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -260,100 +338,94 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       Text(
                         name,
                         style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
                           color: AppPalette.textStrong,
                         ),
                       ),
-                      if (email.isNotEmpty)
-                        Text(
-                          email,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: AppPalette.textMuted,
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isSubscribed ? const Color(0xFF1E293B) : AppPalette.hairline,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          isSubscribed ? 'Premium member' : 'Free plan',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: isSubscribed ? Colors.white : AppPalette.textMuted,
                           ),
                         ),
-                      if (phone != null && phone.isNotEmpty)
-                        Text(
-                          phone,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: AppPalette.textMuted,
-                          ),
-                        ),
+                      ),
                     ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 18),
-            const Divider(color: AppPalette.hairline),
-            const SizedBox(height: 14),
-            // Both counters are hardcoded zero in the RN screen — there is no
-            // consultations or prescriptions data model yet.
-            const Row(
+            const SizedBox(height: 32),
+            Row(
               children: [
-                Expanded(child: _Stat(value: '0', label: 'Consultations')),
-                SizedBox(
-                  height: 32,
-                  child: VerticalDivider(color: AppPalette.hairline),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => context.go(Routes.chat),
+                    child: _Stat(value: '$chatCount', label: 'consultations'),
+                  ),
                 ),
-                Expanded(child: _Stat(value: '0', label: 'Prescriptions')),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => context.push(Routes.medicalHistory),
+                    child: const _Stat(value: '0', label: 'prescriptions'), // Hardcoded till data model
+                  ),
+                ),
               ],
             ),
           ],
         ),
       );
 
-  Widget _section(String title, List<_MenuItem> items) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-        child: Text(
-          title,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: AppPalette.textMuted,
-            letterSpacing: 0.6,
-          ),
-        ),
-      ),
-      Container(
-        margin: const EdgeInsets.symmetric(horizontal: 20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppPalette.hairline),
-        ),
-        child: Column(
-          children: [
-            for (var i = 0; i < items.length; i++) ...[
-              if (i > 0)
-                const Divider(height: 1, indent: 56, color: AppPalette.hairline),
-              _menuRow(items[i]),
-            ],
-          ],
-        ),
-      ),
-    ],
+
+  Widget _section(List<_MenuItem> items) => Material(
+    color: Colors.white,
+    clipBehavior: Clip.antiAlias,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(24),
+      side: const BorderSide(color: AppPalette.hairline),
+    ),
+    child: Column(
+      children: [
+        for (var i = 0; i < items.length; i++) ...[
+          if (i > 0)
+            const Divider(
+              height: 1,
+              indent: 64,
+              color: AppPalette.hairline,
+            ),
+          _menuRow(items[i]),
+        ],
+      ],
+    ),
   );
 
   Widget _menuRow(_MenuItem item) => ListTile(
     onTap: item.onTap ?? () => _notBuilt(item.label),
-    leading: Icon(item.icon, size: 22, color: AppColors.brand),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+    leading: Container(
+      padding: const EdgeInsets.all(8),
+      decoration: const BoxDecoration(
+        color: Color(0xFFF3F4F6),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(item.icon, size: 20, color: const Color(0xFF4B5563)),
+    ),
     title: Text(
       item.label,
       style: const TextStyle(
-        fontSize: 14,
+        fontSize: 16,
         fontWeight: FontWeight.w600,
         color: AppPalette.textStrong,
       ),
-    ),
-    subtitle: Text(
-      item.sub,
-      style: const TextStyle(fontSize: 12, color: AppPalette.textMuted),
     ),
     trailing: const Icon(
       Icons.chevron_right,
@@ -362,22 +434,125 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     ),
   );
 
-  Widget _logoutButton() => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 20),
-    child: OutlinedButton.icon(
-      onPressed: _logout,
-      icon: const Icon(Icons.logout, size: 18),
-      label: const Text('Logout'),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: AppPalette.alert,
-        side: const BorderSide(color: AppPalette.alert),
-        minimumSize: const Size.fromHeight(50),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+  Widget _logoutButton() => OutlinedButton.icon(
+    onPressed: _logout,
+    icon: const Icon(Icons.logout, size: 18),
+    label: const Text('Logout'),
+    style: OutlinedButton.styleFrom(
+      foregroundColor: AppPalette.alert,
+      side: const BorderSide(color: AppPalette.alert),
+      minimumSize: const Size.fromHeight(56),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+      ),
+      textStyle: const TextStyle(
+        fontSize: 16,
+        fontWeight: FontWeight.w600,
       ),
     ),
   );
+}
+
+/// Asks the user to type DELETE before the irreversible call, and keeps the
+/// dialog open with the server's message if it refuses (admin account,
+/// payout in flight) so they know what to do next.
+class _DeleteAccountDialog extends ConsumerStatefulWidget {
+  const _DeleteAccountDialog();
+
+  @override
+  ConsumerState<_DeleteAccountDialog> createState() =>
+      _DeleteAccountDialogState();
+}
+
+class _DeleteAccountDialogState extends ConsumerState<_DeleteAccountDialog> {
+  static const _confirmWord = 'DELETE';
+
+  final _controller = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    try {
+      await ref.read(authControllerProvider.notifier).deleteAccount();
+      if (mounted) Navigator.pop(context, true);
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = errorMessage(e));
+    } on Exception catch (e) {
+      if (mounted) {
+        setState(
+          () => _error = isNetworkError(e)
+              ? offlineMessage
+              : 'Could not reach the server. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final confirmed = _controller.text.trim().toUpperCase() == _confirmWord;
+
+    return AlertDialog(
+      title: const Text('Delete account'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'This permanently deletes your account, chat history, payment '
+            'history and any affiliate balance you have not withdrawn. '
+            'An active subscription ends immediately and is not refunded. '
+            'This cannot be undone.',
+          ),
+          const SizedBox(height: 16),
+          const Text('Type $_confirmWord to confirm.'),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _controller,
+            enabled: !_busy,
+            autocorrect: false,
+            textCapitalization: TextCapitalization.characters,
+            decoration: const InputDecoration(hintText: _confirmWord),
+            onChanged: (_) => setState(() {}),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: const TextStyle(color: AppPalette.alert)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: confirmed && !_busy ? _submit : null,
+          style: TextButton.styleFrom(foregroundColor: AppPalette.alert),
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Delete'),
+        ),
+      ],
+    );
+  }
 }
 
 class _Stat extends StatelessWidget {
@@ -392,14 +567,19 @@ class _Stat extends StatelessWidget {
       Text(
         value,
         style: const TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
-          color: AppColors.brand,
+          fontSize: 22,
+          fontWeight: FontWeight.w800,
+          color: AppPalette.textStrong,
         ),
       ),
+      const SizedBox(height: 2),
       Text(
         label,
-        style: const TextStyle(fontSize: 11, color: AppPalette.textMuted),
+        style: const TextStyle(
+          fontSize: 13, 
+          fontWeight: FontWeight.w500,
+          color: AppPalette.textMuted,
+        ),
       ),
     ],
   );

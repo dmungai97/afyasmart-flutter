@@ -6,7 +6,7 @@
     <!-- Chat, M-Pesa and the symptom endpoints are all network calls. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="afyasmart"
+        android:label="AfyaSmart"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -30,15 +30,44 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Affiliate referral links (https://<host>/register?ref=CODE, see
+                 lib/core/app_links.dart) open the app instead of the browser.
+                 autoVerify needs web/.well-known/assetlinks.json served from
+                 each host. afya-smart-377ad.web.app is the live Firebase
+                 Hosting site; afyasmart.app is kept for when that domain is
+                 registered and connected. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="afya-smart-377ad.web.app" android:pathPrefix="/register"/>
+                <data android:scheme="https" android:host="afya-smart-377ad.web.app" android:pathPrefix="/login"/>
+                <data android:scheme="https" android:host="afyasmart.app" android:pathPrefix="/register"/>
+                <data android:scheme="https" android:host="afyasmart.app" android:pathPrefix="/login"/>
+            </intent-filter>
         </activity>
-        <!-- google_maps_flutter reads the key from here. Supplied at build
-             time via the Gradle property mapsApiKey, so it never lands in
-             version control. Pass it with "-PmapsApiKey=YOUR_KEY" on the
-             build command. Without it the map renders as a blank grey
-             plane. -->
+        <!-- Background pushes posted by FCM use the same high-importance
+             channel the app creates at startup (PushService._channel), so
+             they show as heads-up like foreground ones. -->
         <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="${mapsApiKey}"/>
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="afyasmart_default"/>
+        <!-- Status-bar icon for FCM-posted notifications: Android renders it
+             as a white silhouette, so the full-colour launcher icon would
+             show as a plain square. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification"/>
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/ic_launcher_background"/>
+        <!-- Mapbox Access Token -->
+        <meta-data
+            android:name="com.mapbox.token"
+            android:value="${mapboxApiKey}"/>
+        <meta-data
+            android:name="MBXAccessToken"
+            android:value="${mapboxApiKey}"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

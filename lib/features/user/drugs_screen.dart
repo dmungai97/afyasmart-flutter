@@ -1,12 +1,18 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 
+import '../../core/errors.dart';
+import '../../core/router.dart';
 import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../models/catalogue.dart';
+import '../../state/catalogue_cache.dart';
 import '../../state/providers.dart';
 import 'widgets/catalogue_widgets.dart';
 
@@ -22,15 +28,37 @@ class DrugsScreen extends ConsumerStatefulWidget {
 /// user can tell curated local data from an external label.
 enum DrugSource { local, fda }
 
-const _categories = [
-  'All',
-  'Antibiotic',
-  'Analgesic',
-  'Antidiabetic',
-  'NSAID',
-  'Antimalarial',
-  'Other',
-];
+/// Category chips, each matching any category text containing one of its
+/// keywords. Plain-language labels, since the catalogue's categories are
+/// clinical ("Antihypertensive (ACE Inhibitor)") and OpenFDA's differ again
+/// ("Penicillin-class Antibacterial"). "Other" is everything no chip claims.
+const _categories = <String, List<String>>{
+  'All': [],
+  'Antibiotic': ['antibiotic', 'antibacterial'],
+  'Malaria': ['antimalarial'],
+  'Pain': ['analgesic', 'nsaid', 'anti-inflammatory', 'antispasmodic'],
+  'Blood pressure': ['antihypertensive', 'calcium channel'],
+  'Diabetes': ['antidiabetic'],
+  'Allergy': ['antihistamine'],
+  'Fungal': ['antifungal'],
+  'Other': [],
+};
+
+bool _inCategory(Drug d, String tab) {
+  final category = d.category.toLowerCase();
+  bool matches(List<String> keywords) => keywords.any(category.contains);
+  return switch (tab) {
+    'All' => true,
+    'Other' => !_categories.values.any(matches),
+    _ => matches(_categories[tab] ?? const []),
+  };
+}
+
+/// Offered on the empty state so the first search is one tap. Common
+/// medicines in Kenya, spanning the category chips.
+const _popular = ['Paracetamol', 'Amoxicillin', 'Ibuprofen', 'Metformin', 'Artemether'];
+
+const _surface = Color(0xFFF2F4F5);
 
 /// Inferred from the dosage text — the catalogue has no form column.
 String _formType(Drug d) {
@@ -41,13 +69,6 @@ String _formType(Drug d) {
   return 'Tablet';
 }
 
-const _formColors = {
-  'Tablet': (bg: Color(0xFFE8F4FE), fg: Color(0xFF1565C0)),
-  'Capsule': (bg: Color(0xFFF3E8FF), fg: Color(0xFF6A1B9A)),
-  'Syrup': (bg: Color(0xFFE8F5E9), fg: Color(0xFF2E7D32)),
-  'Injection': (bg: Color(0xFFFFF3E0), fg: Color(0xFFE65100)),
-};
-
 class _DrugsScreenState extends ConsumerState<DrugsScreen> {
   final _query = TextEditingController();
 
@@ -57,6 +78,11 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
   bool _loading = false;
   bool _searched = false;
   bool _locked = false;
+  String? _error;
+
+  /// See _loadSeq on the doctors screen: a search overtaken by a newer one
+  /// (two quick taps on the common searches) has its results dropped.
+  int _searchSeq = 0;
 
   @override
   void dispose() {
@@ -64,29 +90,82 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
     super.dispose();
   }
 
-  Future<void> _search() async {
+  Future<void> _search([String? preset]) async {
+    if (preset != null) {
+      _query.text = preset;
+      FocusScope.of(context).unfocus();
+    }
     final q = _query.text.trim();
     if (q.isEmpty) return;
+
+    final seq = ++_searchSeq;
+
+    final cacheKey = q.toLowerCase();
+    final cache = ref.read(catalogueCacheProvider);
+    if (cache.drugs[cacheKey] case final hit?) {
+      setState(() {
+        _searched = true;
+        _locked = false;
+        _error = null;
+        _loading = false;
+        _results = hit.results;
+        _source = hit.fromFda ? DrugSource.fda : DrugSource.local;
+      });
+      return;
+    }
 
     setState(() {
       _loading = true;
       _searched = true;
       _source = null;
       _locked = false;
+      _error = null;
     });
 
     try {
-      final local = await ref.read(catalogueServiceProvider).searchDrugs(q);
+      var results = const <Drug>[];
+      var source = DrugSource.local;
+      Exception? localError;
 
-      if (local.isNotEmpty) {
-        if (!mounted) return;
-        setState(() {
-          _results = local;
-          _source = DrugSource.local;
-        });
-      } else {
-        await _fallbackToFda(q);
+      // Started now rather than after our search misses — which, with a
+      // small local catalogue, it usually does. Only used on a miss, so our
+      // own curated data still wins whenever it has an answer. The handler
+      // keeps a failure from being reported as unhandled when it is not
+      // needed; awaiting it below still sees the error.
+      final fda = _searchOpenFda(q);
+      unawaited(fda.then<void>((_) {}, onError: (Object _) {}));
+
+      try {
+        results = await ref.read(catalogueServiceProvider).searchDrugs(q);
+      } on PaywallException {
+        rethrow;
+      } on Exception catch (e) {
+        // Offline, OpenFDA is unreachable too — say so rather than try it.
+        if (isNetworkError(e)) rethrow;
+        // A genuine backend failure still falls back, as before.
+        localError = e;
       }
+
+      if (results.isEmpty) {
+        results = await fda;
+        source = DrugSource.fda;
+        // Both empty, but ours never answered: "no medicines found" would
+        // be a guess, so report the failure instead.
+        if (results.isEmpty && localError != null) throw localError;
+      }
+
+      // Hits only: a miss is worth asking again next time.
+      if (results.isNotEmpty) {
+        cache.drugs[cacheKey] = (
+          results: results,
+          fromFda: source == DrugSource.fda,
+        );
+      }
+      if (!mounted || seq != _searchSeq) return;
+      setState(() {
+        _results = results;
+        _source = results.isEmpty ? null : source;
+      });
     } on PaywallException {
       // Deliberately NOT falling through to OpenFDA here.
       //
@@ -95,31 +174,31 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
       // through an external API. The route guard normally stops a
       // non-subscriber reaching this screen at all, but defence in depth is
       // cheap and a silent leak is not.
-      if (!mounted) return;
+      if (!mounted || seq != _searchSeq) return;
       setState(() {
         _results = const [];
         _locked = true;
       });
-    } on Exception {
-      // A genuine backend failure still falls back, as before.
-      await _fallbackToFda(q);
+    } on Exception catch (e) {
+      if (!mounted || seq != _searchSeq) return;
+      setState(() {
+        _results = const [];
+        _error = errorMessage(e);
+      });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && seq == _searchSeq) setState(() => _loading = false);
     }
-  }
-
-  Future<void> _fallbackToFda(String query) async {
-    final results = await _searchOpenFda(query);
-    if (!mounted) return;
-    setState(() {
-      _results = results;
-      _source = results.isEmpty ? null : DrugSource.fda;
-    });
   }
 
   /// OpenFDA's public label API. No key required, and no auth is sent — this
   /// is a public reference lookup, not user data.
+  ///
+  /// Throws on network failure or an unusable response, so the screen can
+  /// tell "nothing matched" from "could not ask".
   Future<List<Drug>> _searchOpenFda(String query) async {
+    const unavailable = ApiException(
+      'The drug database is unavailable right now. Please try again.',
+    );
     try {
       final encoded = Uri.encodeComponent(query);
       final uri = Uri.parse(
@@ -128,11 +207,15 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
         '&limit=10',
       );
 
-      final response = await http.get(uri);
-      if (response.statusCode != 200) return const [];
+      final response = await http
+          .get(uri)
+          .timeout(const Duration(seconds: 15));
+      // OpenFDA answers a search with no matches with 404.
+      if (response.statusCode == 404) return const [];
+      if (response.statusCode != 200) throw unavailable;
 
       final body = jsonDecode(response.body);
-      if (body is! Map<String, dynamic>) return const [];
+      if (body is! Map<String, dynamic>) throw unavailable;
 
       final results = (body['results'] as List?) ?? const [];
 
@@ -161,8 +244,9 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
               uses: clip(r['indications_and_usage'], 'See full label.'),
               dosage: clip(r['dosage_and_administration'], 'See full label.'),
               sideEffects: clip(r['adverse_reactions'], 'Not listed.'),
-              // OpenFDA labels do not expose these as booleans, so they are
-              // reported as unsafe rather than guessed.
+              // OpenFDA labels do not expose these as booleans. They are set
+              // false, and _SafetyLine shows them as "not stated" for FDA
+              // results rather than as a cross.
               pregnancySafe: false,
               alcoholSafe: false,
               lactationSafe: false,
@@ -171,106 +255,111 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
                   : 'Yes',
             ),
       ];
-    } on Exception {
-      return const [];
+    } on FormatException {
+      throw unavailable;
     }
   }
 
-  List<Drug> get _filtered => _activeTab == 'All'
-      ? _results
-      : _results
-            .where(
-              (d) => d.category.toLowerCase().contains(_activeTab.toLowerCase()),
-            )
-            .toList();
+  List<Drug> get _filtered =>
+      _results.where((d) => _inCategory(d, _activeTab)).toList();
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFFF5F7FA),
-      child: Column(
-        children: [
-          _header(),
-          _categoryChips(),
-          Expanded(child: _body()),
-        ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.dark.copyWith(
+        statusBarColor: Colors.transparent,
+      ),
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _header(),
+            if (_searched && !_locked && _error == null) _categoryChips(),
+            const Divider(height: 1, color: AppPalette.hairline),
+            Expanded(child: _body()),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _header() => Container(
-    color: AppColors.brand,
+  Widget _header() => Padding(
     padding: EdgeInsets.fromLTRB(
-      20,
-      MediaQuery.viewPaddingOf(context).top + 16,
-      20,
-      18,
+      8,
+      MediaQuery.viewPaddingOf(context).top + 4,
+      16,
+      12,
     ),
     child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Drugs Database',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  Text(
-                    'Search medicines & info',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                ],
+            IconButton(
+              onPressed: () =>
+                  context.canPop() ? context.pop() : context.go(Routes.home),
+              icon: const Icon(
+                Icons.arrow_back_rounded,
+                color: AppPalette.textStrong,
               ),
             ),
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.medical_services,
-                size: 22,
-                color: Colors.white,
+            const SizedBox(width: 2),
+            const Text(
+              'Medicines',
+              style: TextStyle(
+                color: AppPalette.textStrong,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.2,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 14),
-        TextField(
-          controller: _query,
-          textInputAction: TextInputAction.search,
-          onSubmitted: (_) => _search(),
-          onChanged: (_) => setState(() {}),
-          decoration: InputDecoration(
-            hintText: 'Search medicine...',
-            isDense: true,
-            filled: true,
-            fillColor: Colors.white,
-            prefixIcon: const Icon(Icons.search, size: 20),
-            suffixIcon: _query.text.isEmpty
-                ? null
-                : IconButton(
-                    icon: const Icon(Icons.cancel, size: 18),
-                    onPressed: () => setState(() {
-                      _query.clear();
-                      _results = const [];
-                      _searched = false;
-                      _source = null;
-                      _locked = false;
-                    }),
-                  ),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
+        const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: TextField(
+            controller: _query,
+            textInputAction: TextInputAction.search,
+            onSubmitted: (_) => _search(),
+            onChanged: (_) => setState(() {}),
+            cursorColor: AppColors.brand,
+            style: const TextStyle(fontSize: 15, color: AppPalette.textStrong),
+            decoration: InputDecoration(
+              hintText: 'Search by name, e.g. paracetamol',
+              hintStyle: const TextStyle(color: AppPalette.textMuted),
+              isDense: true,
+              filled: true,
+              fillColor: _surface,
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              prefixIcon: const Icon(
+                Icons.search_rounded,
+                size: 20,
+                color: AppPalette.textMuted,
+              ),
+              suffixIcon: _query.text.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: AppPalette.textMuted,
+                      ),
+                      onPressed: () => setState(() {
+                        _query.clear();
+                        _results = const [];
+                        _searched = false;
+                        _source = null;
+                        _locked = false;
+                        _error = null;
+                        _activeTab = 'All';
+                      }),
+                    ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
             ),
           ),
         ),
@@ -278,28 +367,21 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
     ),
   );
 
+  /// Only shown once there are results to filter; before a search they
+  /// would filter nothing.
   Widget _categoryChips() => SizedBox(
-    height: 46,
+    height: 44,
     child: ListView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       children: [
-        for (final cat in _categories)
+        for (final cat in _categories.keys)
           Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ChoiceChip(
-              label: Text(cat),
+            padding: const EdgeInsets.only(right: 6),
+            child: _Pill(
+              label: cat,
               selected: _activeTab == cat,
-              onSelected: (_) => setState(() => _activeTab = cat),
-              selectedColor: AppColors.brand,
-              backgroundColor: Colors.white,
-              side: const BorderSide(color: AppPalette.hairline),
-              showCheckmark: false,
-              labelStyle: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: _activeTab == cat ? Colors.white : AppPalette.textBody,
-              ),
+              onTap: () => setState(() => _activeTab = cat),
             ),
           ),
       ],
@@ -308,7 +390,16 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
 
   Widget _body() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator(color: AppColors.brand));
+      return const Center(
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppColors.brand,
+          ),
+        ),
+      );
     }
 
     if (_locked) {
@@ -317,168 +408,176 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
           locked: true,
           lockedMessage: 'Subscribe to search the drug database',
           emptyMessage: '',
-          emptyIcon: '💊',
+          emptyIcon: '',
         ),
       );
     }
 
-    if (!_searched) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 40),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('🔍', style: TextStyle(fontSize: 34)),
-              SizedBox(height: 12),
-              Text(
-                'Search for a medicine to see its uses, dosage and safety '
-                'information.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: AppPalette.textMuted,
-                  height: 1.5,
-                ),
-              ),
-            ],
-          ),
-        ),
+    if (!_searched) return _intro();
+
+    if (_error case final error?) {
+      return _EmptyState(
+        icon: error == offlineMessage
+            ? Icons.wifi_off_rounded
+            : Icons.error_outline_rounded,
+        title: 'Could not search',
+        message: error,
+        onRetry: () => _search(),
       );
     }
 
     final filtered = _filtered;
     if (filtered.isEmpty) {
-      return const SingleChildScrollView(
-        child: CatalogueEmpty(
-          locked: false,
-          lockedMessage: '',
-          emptyMessage: 'No medicines found',
-          emptyIcon: '💊',
-        ),
+      return _EmptyState(
+        icon: Icons.search_off_rounded,
+        title: 'No medicines found',
+        message: _activeTab == 'All'
+            ? 'Check the spelling, or try the generic name.'
+            : 'Nothing in $_activeTab. Try another category.',
       );
     }
 
-    return Column(
-      children: [
-        if (_source == DrugSource.fda) _fdaNotice(),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            itemCount: filtered.length,
-            itemBuilder: (_, i) => _card(filtered[i]),
-          ),
-        ),
-      ],
+    return ListView.separated(
+      padding: const EdgeInsets.only(bottom: 24),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      itemCount: filtered.length + (_source == DrugSource.fda ? 1 : 0),
+      separatorBuilder: (_, _) =>
+          const Divider(height: 1, indent: 20, color: AppPalette.hairline),
+      itemBuilder: (_, i) {
+        if (_source == DrugSource.fda) {
+          if (i == 0) return _fdaNotice();
+          return _row(filtered[i - 1]);
+        }
+        return _row(filtered[i]);
+      },
     );
   }
 
-  Widget _fdaNotice() => Container(
-    margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    decoration: BoxDecoration(
-      color: AppPalette.orangeBg,
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: const Row(
+  /// Before any search: what this is, plus a few one-tap searches.
+  Widget _intro() => ListView(
+    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+    padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
+    children: [
+      const Text(
+        'Look up a medicine',
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          color: AppPalette.textStrong,
+        ),
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'See what it treats, how it is taken, side effects, and whether it is '
+        'safe in pregnancy, while breastfeeding or with alcohol.',
+        style: TextStyle(
+          fontSize: 13,
+          height: 1.5,
+          color: AppPalette.textMuted,
+        ),
+      ),
+      const SizedBox(height: 24),
+      const Text(
+        'COMMON SEARCHES',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.6,
+          color: AppPalette.textMuted,
+        ),
+      ),
+      const SizedBox(height: 10),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final name in _popular)
+            _Pill(label: name, onTap: () => _search(name)),
+        ],
+      ),
+    ],
+  );
+
+  Widget _fdaNotice() => const Padding(
+    padding: EdgeInsets.fromLTRB(20, 12, 20, 12),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(Icons.info_outline, size: 15, color: AppPalette.orange),
+        Icon(Icons.info_outline_rounded, size: 15, color: AppPalette.textMuted),
         SizedBox(width: 8),
         Expanded(
           child: Text(
-            'Not in our catalogue — showing results from the OpenFDA label '
-            'database.',
-            style: TextStyle(fontSize: 11, color: AppPalette.orange),
+            'Not in our catalogue. Showing results from the US FDA label '
+            'database, which may use US brand names.',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.4,
+              color: AppPalette.textMuted,
+            ),
           ),
         ),
       ],
     ),
   );
 
-  Widget _card(Drug d) {
-    final form = _formType(d);
-    final colors = _formColors[form]!;
-
-    return CatalogueCard(
-      onTap: () => _showDetail(d),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _row(Drug d) => InkWell(
+    onTap: () => _showDetail(d),
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(20, 14, 12, 14),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
                   d.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 15,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w600,
                     color: AppPalette.textStrong,
                   ),
                 ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: colors.bg,
-                  borderRadius: BorderRadius.circular(Radii.pill),
-                ),
-                child: Text(
-                  form,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: colors.fg,
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    if (d.genericName.isNotEmpty &&
+                        d.genericName.toLowerCase() != d.name.toLowerCase())
+                      d.genericName,
+                    _formType(d),
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppPalette.textMuted,
                   ),
                 ),
-              ),
-            ],
-          ),
-          if (d.genericName.isNotEmpty)
-            Text(
-              d.genericName,
-              style: const TextStyle(fontSize: 12, color: AppPalette.textMuted),
-            ),
-          const SizedBox(height: 6),
-          Text(
-            d.uses,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 12,
-              color: AppPalette.textBody,
-              height: 1.4,
+                const SizedBox(height: 6),
+                Text(
+                  d.uses,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    height: 1.4,
+                    color: AppPalette.textBody,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _SafetyLine(d, stated: _source != DrugSource.fda),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              _safetyBadge('Pregnancy', d.pregnancySafe),
-              _safetyBadge('Alcohol', d.alcoholSafe),
-              _safetyBadge('Lactation', d.lactationSafe),
-            ],
+          const SizedBox(width: 8),
+          const Icon(
+            Icons.chevron_right_rounded,
+            size: 20,
+            color: AppPalette.textMuted,
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _safetyBadge(String label, bool safe) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-    decoration: BoxDecoration(
-      color: safe ? AppPalette.greenBg : AppPalette.redBg,
-      borderRadius: BorderRadius.circular(Radii.pill),
-    ),
-    child: Text(
-      '${safe ? '✓' : '✗'} $label',
-      style: TextStyle(
-        fontSize: 10,
-        fontWeight: FontWeight.w600,
-        color: safe ? AppPalette.green : AppPalette.red,
       ),
     ),
   );
@@ -536,16 +635,18 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
               'Prescription required',
               d.prescriptionRequired == 'No' ? 'No — over the counter' : 'Yes',
             ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _safetyBadge('Pregnancy', d.pregnancySafe),
-                _safetyBadge('Alcohol', d.alcoholSafe),
-                _safetyBadge('Lactation', d.lactationSafe),
-              ],
+            const SizedBox(height: 2),
+            Text(
+              'SAFETY',
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: AppPalette.textMuted,
+                letterSpacing: 0.6,
+              ),
             ),
+            const SizedBox(height: 8),
+            _SafetyLine(d, stated: _source != DrugSource.fda),
             const SizedBox(height: 20),
             const Text(
               'Always confirm dosage with a pharmacist or doctor before '
@@ -587,5 +688,138 @@ class _DrugsScreenState extends ConsumerState<DrugsScreen> {
         ),
       ],
     ),
+  );
+}
+
+/// Small rounded label used for category filters and common searches.
+/// Selected: teal on light teal. Otherwise: plain text on light grey.
+class _Pill extends StatelessWidget {
+  const _Pill({required this.label, required this.onTap, this.selected = false});
+
+  final String label;
+  final VoidCallback onTap;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: selected ? const Color(0xFFE0F2F1) : _surface,
+    shape: const StadiumBorder(),
+    child: InkWell(
+      onTap: onTap,
+      customBorder: const StadiumBorder(),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+            color: selected ? AppColors.brand : AppPalette.textBody,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// The three safety flags as quiet text with a small tick or cross, instead
+/// of three coloured pills per row.
+class _SafetyLine extends StatelessWidget {
+  const _SafetyLine(this.drug, {required this.stated});
+
+  final Drug drug;
+
+  /// False for OpenFDA results: labels carry no such flags, and showing a
+  /// cross for "unknown" would read as "unsafe" — a medical claim nobody
+  /// made.
+  final bool stated;
+
+  @override
+  Widget build(BuildContext context) => !stated
+      ? const Text(
+          'Pregnancy, breastfeeding and alcohol safety not stated. '
+          'Ask a pharmacist.',
+          style: TextStyle(fontSize: 12, color: AppPalette.textMuted),
+        )
+      : Wrap(
+    spacing: 14,
+    runSpacing: 4,
+    children: [
+      _flag('Pregnancy', drug.pregnancySafe),
+      _flag('Breastfeeding', drug.lactationSafe),
+      _flag('Alcohol', drug.alcoholSafe),
+    ],
+  );
+
+  static Widget _flag(String label, bool safe) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(
+        safe ? Icons.check_rounded : Icons.close_rounded,
+        size: 14,
+        color: safe ? AppPalette.green : AppPalette.red,
+      ),
+      const SizedBox(width: 3),
+      Text(
+        label,
+        style: const TextStyle(fontSize: 12, color: AppPalette.textMuted),
+      ),
+    ],
+  );
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.onRetry,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.fromLTRB(40, 72, 40, 24),
+    children: [
+      Icon(icon, size: 32, color: AppPalette.textMuted),
+      const SizedBox(height: 12),
+      Text(
+        title,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: AppPalette.textStrong,
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        message,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 13,
+          height: 1.5,
+          color: AppPalette.textMuted,
+        ),
+      ),
+      if (onRetry != null) ...[
+        const SizedBox(height: 16),
+        Center(
+          child: OutlinedButton(
+            onPressed: onRetry,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.brand,
+              side: const BorderSide(color: AppColors.brand),
+              shape: const StadiumBorder(),
+            ),
+            child: const Text('Retry'),
+          ),
+        ),
+      ],
+    ],
   );
 }

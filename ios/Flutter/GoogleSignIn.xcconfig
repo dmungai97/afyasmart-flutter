@@ -1,0 +1,7 @@
+// Google sign-in on iOS. Fill in from the iOS OAuth client in Google Cloud
+// Console (APIs & Services -> Credentials): "iOS URL scheme", which looks like
+// com.googleusercontent.apps.1234567890-abcdef. The same client's ID is
+// passed to the app as --dart-define=GOOGLE_IOS_CLIENT_ID=...
+//
+// Not a secret: it ships inside every build of the app.
+GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.REPLACE_ME

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'brand.dart';
+import 'theme.dart';
+
 import '../features/admin/admin_dashboard_screen.dart';
 import '../features/admin/admin_facilities_screen.dart';
 import '../features/admin/admin_payouts_screen.dart';
@@ -22,16 +25,25 @@ import '../features/onboarding/locked_results_screen.dart';
 import '../features/onboarding/symptom_chat_screen.dart';
 import '../features/onboarding/welcome_screen.dart';
 import '../features/shell/tab_shell.dart';
+import '../features/user/change_password_screen.dart';
 import '../features/user/chat_screen.dart';
 import '../features/user/diagnosis_results_screen.dart';
 import '../features/user/doctors_screen.dart';
 import '../features/user/drugs_screen.dart';
+import '../features/user/help_support_screen.dart';
 import '../features/user/home_screen.dart';
+import '../features/user/inbox_screen.dart';
 import '../features/user/map_screen.dart';
+import '../features/user/medical_history_screen.dart';
+import '../features/user/notifications_screen.dart';
+import '../features/user/payment_history_screen.dart';
+import '../features/user/personal_info_screen.dart';
 import '../features/user/pharmacy_screen.dart';
+import '../features/user/privacy_policy_screen.dart';
 import '../features/user/profile_screen.dart';
 import '../features/user/subscription_screen.dart';
 import '../features/user/symptoms_screen.dart';
+import '../features/user/terms_conditions_screen.dart';
 import '../state/auth_controller.dart';
 
 /// Port of the redirect logic in app/_layout.tsx.
@@ -43,6 +55,7 @@ import '../state/auth_controller.dart';
 /// the effect-based version could produce before its replace() landed.
 
 abstract final class Routes {
+  static const splash = '/splash';
   static const welcome = '/welcome';
   static const healthCheck = '/health-check';
   static const symptomChat = '/symptom-chat';
@@ -62,6 +75,15 @@ abstract final class Routes {
   static const map = '/map';
   static const subscription = '/subscription';
   static const profile = '/profile';
+  static const inbox = '/inbox';
+  static const personalInfo = '/profile/personal-info';
+  static const changePassword = '/profile/change-password';
+  static const paymentHistory = '/profile/payments';
+  static const notifications = '/profile/notifications';
+  static const medicalHistory = '/profile/medical-history';
+  static const privacyPolicy = '/profile/privacy';
+  static const termsConditions = '/profile/terms';
+  static const helpSupport = '/profile/help-support';
 
   static const admin = '/admin';
   static const adminUsers = '/admin/users';
@@ -96,6 +118,15 @@ abstract final class Routes {
     map,
     subscription,
     profile,
+    inbox,
+    personalInfo,
+    changePassword,
+    paymentHistory,
+    notifications,
+    medicalHistory,
+    privacyPolicy,
+    termsConditions,
+    helpSupport,
   };
 
   /// Routes that require an active subscription. Note that [subscription]
@@ -111,19 +142,39 @@ abstract final class Routes {
   };
 }
 
-final routerProvider = Provider<GoRouter>((ref) {
-  final auth = ref.watch(authControllerProvider);
+/// Only sign-in and sign-up links are resumed after a cold start: they are
+/// what referral and plan links point at, and every other route is reached by
+/// the redirect rules anyway. Anything else is ignored rather than trusted.
+String? _resumableLink(String? next) {
+  if (next == null) return null;
+  final uri = Uri.tryParse(next);
+  if (uri == null || !Routes.auth.contains(uri.path)) return null;
+  return uri.toString();
+}
 
+final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
-    initialLocation: Routes.welcome,
+    initialLocation: Routes.splash,
     // Re-runs redirect whenever auth state changes, which is what makes
     // "sign out anywhere and land on welcome" work without each screen
     // handling it.
     refreshListenable: _AuthListenable(ref),
     redirect: (context, goState) {
-      if (auth.loading) return null;
-
+      final auth = ref.read(authControllerProvider);
       final location = goState.matchedLocation;
+
+      // A link that cold-starts the app (.../register?ref=..., see AppLinks)
+      // arrives while auth is still hydrating. Parking on a bare splash would
+      // drop it, and the referral with it, so the target rides along as
+      // ?next= and is resumed below once auth settles.
+      if (auth.loading) {
+        if (location == Routes.splash) return null;
+        return Uri(
+          path: Routes.splash,
+          queryParameters: {'next': goState.uri.toString()},
+        ).toString();
+      }
+
       final user = auth.user;
       final signedIn = user != null;
 
@@ -133,43 +184,60 @@ final routerProvider = Provider<GoRouter>((ref) {
       final inAdmin = location.startsWith(Routes.admin);
       final inAffiliate = location.startsWith(Routes.affiliate);
 
-      if (inAffiliate) return signedIn ? null : Routes.login;
-
-      if (!signedIn) {
-        if (inAdmin || inTabs) return Routes.login;
-        if (inAuth || inOnboarding) return null;
-        return Routes.welcome;
-      }
-
-      if (inAdmin) return user.isAdmin ? null : Routes.home;
-
-      // Admins land in the console rather than the patient app.
-      if (user.isAdmin && (inAuth || inTabs || inOnboarding)) {
-        return Routes.admin;
-      }
-
-      if (user.isSubscribed) return inTabs ? null : Routes.home;
-
-      // A non-subscriber may always reach the paywall itself.
-      if (location == Routes.subscription) return null;
-
-      if (Routes.premium.contains(location)) return Routes.subscription;
-
-      // Only a brand-new registration is pushed through the survey; an
-      // existing user who never finished it is not bounced on every launch.
-      final needsOnboarding =
-          auth.isNewUser &&
+      String? result;
+      if (location == Routes.splash) {
+        final next = _resumableLink(goState.uri.queryParameters['next']);
+        if (!signedIn && next != null) {
+          result = next;
+        } else if (signedIn) {
+          result = user.isAdmin ? Routes.admin : Routes.home;
+        } else if (auth.hasCompletedOnboarding) {
+          result = Routes.login;
+        } else {
+          result = Routes.welcome;
+        }
+      } else if (inAffiliate) {
+        result = signedIn ? null : Routes.login;
+      } else if (!signedIn) {
+        if (inAdmin || inTabs) {
+          result = Routes.login;
+        } else if (inAuth || inOnboarding) {
+          result = null;
+        } else if (auth.hasCompletedOnboarding) {
+          result = Routes.login;
+        } else {
+          result = Routes.welcome;
+        }
+      } else if (inAdmin) {
+        result = user.isAdmin ? null : Routes.home;
+      } else if (user.isAdmin && (inAuth || inOnboarding)) {
+        result = Routes.admin;
+      } else if (user.isSubscribed) {
+        result = inTabs ? null : Routes.home;
+      } else if (location == Routes.subscription) {
+        result = null;
+      } else if (Routes.premium.contains(location)) {
+        result = Routes.subscription;
+      } else if (auth.isNewUser &&
           !auth.hasCompletedOnboarding &&
-          !user.onboardingCompleted;
+          !user.onboardingCompleted) {
+        result = inOnboarding ? null : Routes.welcome;
+      } else if (inOnboarding || inAuth) {
+        final plan = goState.uri.queryParameters['plan'];
+        if (plan != null && plan.isNotEmpty && !user.isSubscribed) {
+          result = '${Routes.subscription}?plan=$plan';
+        } else {
+          result = Routes.home;
+        }
+      }
 
-      if (needsOnboarding) return inOnboarding ? null : Routes.welcome;
-
-      // Existing users should not be forced through the new-user flow.
-      if (inOnboarding || inAuth) return Routes.home;
-
-      return null;
+      debugPrint(
+        '[Router] location: $location, signedIn: $signedIn, -> redirect: $result',
+      );
+      return result;
     },
     routes: [
+      GoRoute(path: Routes.splash, builder: (_, _) => const _SplashOverlay()),
       // ?plan= and ?ref= come from deep links and are carried between the
       // two auth screens, matching useLocalSearchParams() in the RN
       // originals: `ref` attributes the referral at sign-up, `plan` sends the
@@ -186,10 +254,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           plan: goState.uri.queryParameters['plan'],
         ),
       ),
-      GoRoute(
-        path: Routes.welcome,
-        builder: (_, _) => const WelcomeScreen(),
-      ),
+      GoRoute(path: Routes.welcome, builder: (_, _) => const WelcomeScreen()),
       GoRoute(
         path: Routes.healthCheck,
         builder: (_, _) => const HealthCheckScreen(),
@@ -214,8 +279,14 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, _, child) => TabShell(child: child),
         routes: [
           GoRoute(path: Routes.home, builder: (_, _) => const HomeScreen()),
-          GoRoute(path: Routes.profile, builder: (_, _) => const ProfileScreen()),
-          GoRoute(path: Routes.doctors, builder: (_, _) => const DoctorsScreen()),
+          GoRoute(
+            path: Routes.profile,
+            builder: (_, _) => const ProfileScreen(),
+          ),
+          GoRoute(
+            path: Routes.doctors,
+            builder: (_, _) => const DoctorsScreen(),
+          ),
           GoRoute(path: Routes.chat, builder: (_, _) => const ChatScreen()),
           GoRoute(path: Routes.map, builder: (_, _) => const MapScreen()),
         ],
@@ -224,11 +295,43 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: Routes.diagnosisResults,
         builder: (_, _) => const DiagnosisResultsScreen(),
       ),
-      GoRoute(
-        path: Routes.pharmacy,
-        builder: (_, _) => const PharmacyScreen(),
-      ),
+      GoRoute(path: Routes.pharmacy, builder: (_, _) => const PharmacyScreen()),
       GoRoute(path: Routes.drugs, builder: (_, _) => const DrugsScreen()),
+      // Profile sub-pages sit outside the tab shell, like subscription, so
+      // they open full-screen with their own back arrow.
+      GoRoute(
+        path: Routes.personalInfo,
+        builder: (_, _) => const PersonalInfoScreen(),
+      ),
+      GoRoute(
+        path: Routes.changePassword,
+        builder: (_, _) => const ChangePasswordScreen(),
+      ),
+      GoRoute(
+        path: Routes.paymentHistory,
+        builder: (_, _) => const PaymentHistoryScreen(),
+      ),
+      GoRoute(
+        path: Routes.notifications,
+        builder: (_, _) => const NotificationsScreen(),
+      ),
+      GoRoute(path: Routes.inbox, builder: (_, _) => const InboxScreen()),
+      GoRoute(
+        path: Routes.medicalHistory,
+        builder: (_, _) => const MedicalHistoryScreen(),
+      ),
+      GoRoute(
+        path: Routes.privacyPolicy,
+        builder: (_, _) => const PrivacyPolicyScreen(),
+      ),
+      GoRoute(
+        path: Routes.termsConditions,
+        builder: (_, _) => const TermsConditionsScreen(),
+      ),
+      GoRoute(
+        path: Routes.helpSupport,
+        builder: (_, _) => const HelpSupportScreen(),
+      ),
       GoRoute(
         path: Routes.subscription,
         builder: (_, goState) => SubscriptionScreen(
@@ -299,6 +402,38 @@ final routerProvider = Provider<GoRouter>((ref) {
 /// Bridges Riverpod state changes into go_router's Listenable-based refresh.
 class _AuthListenable extends ChangeNotifier {
   _AuthListenable(Ref ref) {
-    ref.listen(authControllerProvider, (_, _) => notifyListeners());
+    ref.listen<AuthState>(authControllerProvider, (prev, next) {
+      if (prev?.user != next.user || prev?.loading != next.loading) {
+        notifyListeners();
+      }
+    });
+  }
+}
+
+class _SplashOverlay extends StatelessWidget {
+  const _SplashOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: AppColors.paper,
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 120,
+              height: 2,
+              child: LinearProgressIndicator(
+                backgroundColor: AppColors.rule,
+                valueColor: AlwaysStoppedAnimation<Color>(AppColors.accent),
+              ),
+            ),
+            SizedBox(height: 24),
+            Wordmark(fontSize: 32),
+          ],
+        ),
+      ),
+    );
   }
 }

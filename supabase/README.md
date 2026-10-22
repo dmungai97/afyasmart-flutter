@@ -73,7 +73,7 @@ RS256 by hand) and `firestore.ts` (a hand-rolled REST client, duplicated in
 each function) are both gone — 5 files, ~715 lines, replaced by
 `_shared/supabase.ts`. Auth is now `supabase.auth.getUser(token)`.
 
-`verify_jwt` stays **off** for all three, and auth is enforced per-route:
+`verify_jwt` stays **off** for all of them, and auth is enforced per-route:
 
 | Function | Route | Auth |
 |---|---|---|
@@ -81,6 +81,7 @@ each function) are both gone — 5 files, ~715 lines, replaced by
 | `mpesa` | `/initiate`, `/status` | Supabase access token |
 | `mpesa` | `/callback` | **None** — Safaricom cannot send one |
 | `symptoms` | `/analyze`, `/clarify` | **None** — guest onboarding predates the account |
+| `account` | `/delete` | Supabase access token |
 
 The M-Pesa callback is unauthenticated by necessity, and the
 `CheckoutRequestID` it carries is also given to the paying client, so a forged
@@ -95,12 +96,61 @@ Deploy with `verify_jwt` off:
 supabase functions deploy chat     --no-verify-jwt
 supabase functions deploy mpesa    --no-verify-jwt
 supabase functions deploy symptoms --no-verify-jwt
+supabase functions deploy account  --no-verify-jwt
+supabase functions deploy push     --no-verify-jwt
 ```
 
 Secrets (`supabase secrets set KEY=value`): `OPENAI_API_KEY`,
 `MPESA_CONSUMER_KEY`, `MPESA_CONSUMER_SECRET`, `MPESA_PASSKEY`,
-`MPESA_SHORTCODE`, `MPESA_CALLBACK_URL`, `MPESA_ENV`. `SUPABASE_URL` and
-`SUPABASE_SERVICE_ROLE_KEY` are injected automatically.
+`MPESA_SHORTCODE`, `MPESA_CALLBACK_URL`, `MPESA_ENV`, `PUSH_WEBHOOK_SECRET`,
+`FCM_SERVICE_ACCOUNT`. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are
+injected automatically.
+
+### Push notifications
+
+Notifications are created in Postgres (triggers on subscription, commission
+and payout changes, plus a daily expiry reminder) and land in
+`public.notifications`, which is also the in-app inbox. Each insert calls the
+`push` function through pg_net, and it delivers through FCM — Android
+directly, iOS through FCM's APNs relay. Firebase is only the delivery pipe; it
+is free on the Spark plan and needs no billing account.
+
+One-time setup:
+
+1. Create a Firebase project (Spark plan). Add an Android app
+   (`com.afyasmart.app`) and an iOS app (`com.afyasmart.afyasmart`).
+2. For iOS, upload an APNs auth key (.p8) under Project settings → Cloud
+   Messaging, and enable the Push Notifications capability in Xcode.
+3. Project settings → Service accounts → Generate new private key, then:
+   Set it base64-encoded. Passing the raw JSON from Windows PowerShell 5.1
+   strips its quotes and the push function cannot parse it:
+   ```powershell
+   $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("service-account.json"))
+   supabase secrets set FCM_SERVICE_ACCOUNT=$b64
+   supabase secrets set PUSH_WEBHOOK_SECRET=<long random string>
+   ```
+   (bash: `supabase secrets set FCM_SERVICE_ACCOUNT=$(base64 -w0 service-account.json)`).
+   Delete the key file afterwards.
+4. In the SQL editor, so the trigger knows where to call:
+   ```sql
+   select vault.create_secret('https://<ref>.supabase.co', 'project_url');
+   select vault.create_secret('<same random string>', 'push_webhook_secret');
+   ```
+5. Build the app with the Firebase app values (Project settings → Your apps):
+   ```bash
+   flutter run \
+     --dart-define=FIREBASE_PROJECT_ID=... \
+     --dart-define=FIREBASE_SENDER_ID=... \
+     --dart-define=FIREBASE_API_KEY=... \
+     --dart-define=FIREBASE_ANDROID_APP_ID=... \
+     --dart-define=FIREBASE_IOS_APP_ID=...
+   ```
+
+To diagnose a push that did not arrive, the function's response for each
+notification is in `net._http_response` (newest first by `created`).
+
+Until steps 3–5 are done nothing breaks: notifications still reach the in-app
+inbox, the trigger skips the call, and the app runs with push off.
 
 ### Wire compatibility
 

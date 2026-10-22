@@ -13,8 +13,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 /// because RLS is what actually protects the data; the service role key must
 /// never appear in the client bundle.
 abstract final class SupabaseConfig {
-  static const url = String.fromEnvironment('SUPABASE_URL');
-  static const anonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+  static const url = String.fromEnvironment(
+    'SUPABASE_URL',
+    defaultValue: 'https://hayxmaxchdoyeqebeeam.supabase.co',
+  );
+  static const anonKey = String.fromEnvironment(
+    'SUPABASE_ANON_KEY',
+    defaultValue: 'sb_publishable_KLGP2mKWAFJQinf3F3Ue5A_fudyOiGn',
+  );
 
   /// Edge functions are addressed explicitly rather than via
   /// `functions.invoke()`, so the existing "/chat/send", "/mpesa/initiate"

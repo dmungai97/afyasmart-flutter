@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/errors.dart';
 import '../../core/router.dart';
+import '../../core/supabase_client.dart';
 import '../../core/theme.dart';
 import '../../models/app_user.dart';
 import '../../services/chat_service.dart';
@@ -24,18 +27,20 @@ const _suggestions = [
   'Help me sleep better',
 ];
 
+/// Shown on an empty conversation. App-only: it is never stored or sent to
+/// the model.
+const _greeting = ChatMessage(
+  role: 'ai',
+  text:
+      "Hello! I'm your AfyaSmart health assistant. "
+      'How can I help you today?',
+);
+
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
 
-  List<ChatMessage> _messages = [
-    const ChatMessage(
-      role: 'ai',
-      text:
-          "Hello! I'm your AfyaSmart health assistant. "
-          'How can I help you today?',
-    ),
-  ];
+  List<ChatMessage> _messages = [_greeting];
 
   bool _sending = false;
   bool _historyLoaded = false;
@@ -114,9 +119,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           .read(chatServiceProvider)
           .send(
             message: text,
-            // The context passed to the model excludes the message just
-            // typed — the edge function appends it itself.
-            history: _messages.sublist(0, _messages.length - 1),
             user: user,
           );
 
@@ -135,14 +137,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if (!mounted) return;
       await ref.read(authControllerProvider.notifier).refresh();
       if (mounted) _showLimitSheet();
-    } on Exception {
+    } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
         _messages = [
           ..._messages,
           ChatMessage(
             role: 'ai',
-            text: 'Sorry, I could not process your request. Please try again.',
+            text: e.message.isNotEmpty
+                ? errorMessage(e)
+                : 'Sorry, I could not process your request. Please try again.',
+            time: _now(),
+          ),
+        ];
+      });
+    } on Exception catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _messages = [
+          ..._messages,
+          ChatMessage(
+            role: 'ai',
+            text: isNetworkError(e)
+                ? offlineMessage
+                : 'Sorry, I could not process your request. Please try again.',
             time: _now(),
           ),
         ];
@@ -150,6 +168,47 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } finally {
       if (mounted) setState(() => _sending = false);
       _scrollToBottom();
+    }
+  }
+
+  Future<void> _startNewChat() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Start a new chat?'),
+        content: const Text(
+          'This clears the current conversation, and the assistant will no '
+          'longer remember it. Your free chat count stays the same.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.brand),
+            child: const Text('New chat'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await ref.read(chatServiceProvider).startNewChat();
+      if (!mounted) return;
+      _input.clear();
+      setState(() => _messages = [_greeting]);
+    } on Exception {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Could not start a new chat. Please try again.'),
+          ),
+        );
     }
   }
 
@@ -231,7 +290,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final user = ref.watch(currentUserProvider);
 
     return Container(
-      color: const Color(0xFFF5F7FA),
+      color: Colors.white,
       child: Column(
         children: [
           _header(user),
@@ -245,10 +304,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             child: ListView.builder(
               controller: _scroll,
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              itemCount: _messages.length + (_sending ? 1 : 0),
+              // +1 for the disclaimer that heads the conversation.
+              itemCount: _messages.length + 1 + (_sending ? 1 : 0),
               itemBuilder: (_, i) {
-                if (i == _messages.length) return const _TypingIndicator();
-                return _bubble(_messages[i]);
+                if (i == 0) return const _Disclaimer();
+                if (i == _messages.length + 1) return const _TypingIndicator();
+                return _bubble(_messages[i - 1]);
               },
             ),
           ),
@@ -264,66 +325,83 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final remaining = user?.remainingFreeChats ?? 0;
     final subscribed = user?.isSubscribed ?? false;
 
-    return Container(
-      color: AppColors.brand,
-      padding: EdgeInsets.fromLTRB(
-        16,
-        MediaQuery.viewPaddingOf(context).top + 12,
-        16,
-        14,
+    // Flat, white, same surface as the conversation: the header is a label,
+    // not a banner. Dark status-bar icons to match.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.dark.copyWith(
+        statusBarColor: Colors.transparent,
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.18),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.auto_awesome,
-              size: 20,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'AfyaSmart Assistant',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
+      child: Container(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          MediaQuery.viewPaddingOf(context).top + 10,
+          12,
+          10,
+        ),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(bottom: BorderSide(color: AppPalette.hairline)),
+        ),
+        child: Row(
+          children: [
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'AfyaSmart',
+                    style: TextStyle(
+                      color: AppPalette.textStrong,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.2,
+                    ),
                   ),
-                ),
-                Text(
-                  'Online',
-                  style: TextStyle(color: Color(0xFF9FE8C8), fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          if (!subscribed)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(Radii.pill),
-              ),
-              child: Text(
-                '$remaining left',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
+                  SizedBox(height: 1),
+                  Text(
+                    'Health assistant',
+                    style: TextStyle(
+                      color: AppPalette.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
               ),
             ),
-        ],
+            // Nothing to clear on a fresh conversation, and clearing
+            // mid-reply would race the server saving that exchange.
+            if (_messages.length > 1 && !_sending)
+              IconButton(
+                onPressed: _startNewChat,
+                tooltip: 'New chat',
+                icon: const Icon(Icons.add_comment_outlined, size: 22),
+                color: AppPalette.textMuted,
+              ),
+            if (!subscribed)
+              remaining == 0
+                  ? TextButton(
+                      onPressed: () => context.go(Routes.subscription),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.brand,
+                        textStyle: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      child: const Text('Upgrade'),
+                    )
+                  : Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text(
+                        remaining == 1 ? '1 free chat' : '$remaining free chats',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppPalette.textMuted,
+                        ),
+                      ),
+                    ),
+          ],
+        ),
       ),
     );
   }
@@ -340,26 +418,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           maxWidth: MediaQuery.sizeOf(context).width * 0.78,
         ),
         decoration: BoxDecoration(
-          color: isUser ? AppColors.brand : Colors.white,
+          color: isUser ? AppColors.brand : const Color(0xFFF2F4F5),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(16),
             topRight: const Radius.circular(16),
             bottomLeft: Radius.circular(isUser ? 16 : 4),
             bottomRight: Radius.circular(isUser ? 4 : 16),
           ),
-          border: isUser ? null : Border.all(color: AppPalette.hairline),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Text(
-              m.text,
-              style: TextStyle(
-                fontSize: 14,
-                height: 1.45,
-                color: isUser ? Colors.white : AppPalette.textBody,
-              ),
-            ),
+            if (isUser)
+              Text(
+                m.text,
+                style: const TextStyle(
+                  fontSize: 14,
+                  height: 1.45,
+                  color: Colors.white,
+                ),
+              )
+            else
+              _FormattedReply(m.text),
             if (m.time != null && m.time!.isNotEmpty) ...[
               const SizedBox(height: 4),
               Text(
@@ -401,9 +481,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ),
   );
 
+  /// Replaces the composer once the free chats are used: a disabled text
+  /// field with a padlock read as broken rather than as "subscribe".
+  Widget _limitBar() => Container(
+    padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+    decoration: const BoxDecoration(
+      color: Colors.white,
+      border: Border(top: BorderSide(color: AppPalette.hairline)),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.lock_outline, size: 18, color: AppPalette.textMuted),
+        const SizedBox(width: 10),
+        const Expanded(
+          child: Text(
+            "You've used your free chats",
+            style: TextStyle(fontSize: 13, color: AppPalette.textBody),
+          ),
+        ),
+        FilledButton(
+          onPressed: () => context.go(Routes.subscription),
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.brand,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            minimumSize: const Size(0, 38),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(Radii.pill),
+            ),
+          ),
+          child: const Text('Subscribe'),
+        ),
+      ],
+    ),
+  );
+
   Widget _composer(AppUser? user) {
     final blocked =
         user != null && !user.isSubscribed && user.chatLimitReached;
+
+    if (blocked) return _limitBar();
 
     return Container(
       padding: EdgeInsets.fromLTRB(
@@ -424,13 +541,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               controller: _input,
               minLines: 1,
               maxLines: 4,
-              enabled: !blocked,
               textInputAction: TextInputAction.send,
               onSubmitted: (_) => _send(),
               decoration: InputDecoration(
-                hintText: blocked
-                    ? 'Subscribe to keep chatting'
-                    : 'Ask a health question…',
+                hintText: 'Ask a health question…',
                 isDense: true,
                 filled: true,
                 fillColor: const Color(0xFFF5F7FA),
@@ -447,20 +561,143 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
           const SizedBox(width: 10),
           IconButton.filled(
-            onPressed: _sending
-                ? null
-                : blocked
-                ? _showLimitSheet
-                : _send,
+            onPressed: _sending ? null : _send,
             style: IconButton.styleFrom(
               backgroundColor: AppColors.brand,
               foregroundColor: Colors.white,
               minimumSize: const Size(46, 46),
             ),
-            icon: Icon(blocked ? Icons.lock_outline : Icons.send, size: 19),
+            icon: const Icon(Icons.send_rounded, size: 19),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Small print at the top of every conversation. A health assistant should
+/// say what it is not, once, without nagging on every reply.
+class _Disclaimer extends StatelessWidget {
+  const _Disclaimer();
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.fromLTRB(24, 4, 24, 16),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(top: 1),
+          child: Icon(Icons.info_outline, size: 13, color: AppPalette.textMuted),
+        ),
+        SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            'AfyaSmart gives general health information, not a diagnosis. '
+            'In an emergency call 999 or 112.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 11,
+              height: 1.4,
+              color: AppPalette.textMuted,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Renders the small subset of Markdown the assistant is told to use:
+/// **bold** spans and "- " / "* " / "1. " list lines. Anything else is shown
+/// as plain text; stray heading markers are turned into bold lines.
+class _FormattedReply extends StatelessWidget {
+  const _FormattedReply(this.text);
+
+  final String text;
+
+  static const _style = TextStyle(
+    fontSize: 14,
+    height: 1.45,
+    color: AppPalette.textBody,
+  );
+
+  static final _bullet = RegExp(r'^\s*[-*•]\s+');
+  static final _numbered = RegExp(r'^\s*(\d+)[.)]\s+');
+  static final _heading = RegExp(r'^\s*#{1,6}\s+');
+
+  @override
+  Widget build(BuildContext context) {
+    final children = <Widget>[];
+
+    for (final raw in text.trim().split('\n')) {
+      if (raw.trim().isEmpty) {
+        if (children.isNotEmpty) children.add(const SizedBox(height: 6));
+        continue;
+      }
+
+      final bullet = _bullet.firstMatch(raw);
+      final numbered = _numbered.firstMatch(raw);
+
+      if (bullet != null || numbered != null) {
+        final marker = bullet != null ? '•' : '${numbered!.group(1)}.';
+        final body = raw.substring((bullet ?? numbered)!.end);
+        children.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 20,
+                  child: Text(
+                    marker,
+                    style: _style.copyWith(
+                      color: AppColors.brand,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Expanded(child: Text.rich(_spans(body), style: _style)),
+              ],
+            ),
+          ),
+        );
+      } else {
+        final heading = _heading.firstMatch(raw);
+        final body =
+            heading != null ? '**${raw.substring(heading.end)}**' : raw;
+        children.add(Text.rich(_spans(body), style: _style));
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: children,
+    );
+  }
+
+  /// Splits on ** pairs. An unbalanced line is shown as-is rather than
+  /// guessing which marker was meant.
+  static TextSpan _spans(String line) {
+    final parts = line.split('**');
+    if (parts.length.isEven) return TextSpan(text: line);
+    return TextSpan(
+      children: [
+        for (var i = 0; i < parts.length; i++)
+          if (parts[i].isNotEmpty)
+            TextSpan(
+              text: parts[i],
+              style: i.isOdd
+                  ? const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: AppPalette.textStrong,
+                    )
+                  : null,
+            ),
+      ],
     );
   }
 }
@@ -492,9 +729,8 @@ class _TypingIndicatorState extends State<_TypingIndicator>
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFF2F4F5),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppPalette.hairline),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

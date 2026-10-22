@@ -1,22 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 import '../../../core/theme.dart';
 
 /// Shared chrome for the affiliate tabs.
 
-final _currency = NumberFormat.currency(
-  locale: 'en_KE',
-  symbol: 'Ksh ',
-  decimalDigits: 0,
-);
+String formatKes(num value) => 'Ksh ${value.toStringAsFixed(0)}';
 
-String formatKes(num value) => _currency.format(value);
-
-final _dateFormat = DateFormat('dd MMM yyyy, HH:mm', 'en');
-
-String formatMoment(DateTime? value) =>
-    value == null ? 'Recent' : _dateFormat.format(value);
+String formatMoment(DateTime? value) {
+  if (value == null) return 'Recent';
+  final date = value.toLocal();
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final day = date.day.toString().padLeft(2, '0');
+  final month = months[(date.month - 1).clamp(0, 11)];
+  final hour = date.hour.toString().padLeft(2, '0');
+  final minute = date.minute.toString().padLeft(2, '0');
+  return '$day $month ${date.year}, $hour:$minute';
+}
 
 class AffiliateHeader extends StatelessWidget {
   const AffiliateHeader({required this.title, this.subtitle, super.key});
@@ -27,12 +29,18 @@ class AffiliateHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
-    color: AppColors.brand,
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [AppColors.brand, AppColors.accent],
+      ),
+    ),
     padding: EdgeInsets.fromLTRB(
-      20,
-      MediaQuery.viewPaddingOf(context).top + 16,
-      20,
-      18,
+      24,
+      MediaQuery.viewPaddingOf(context).top + 18,
+      24,
+      24,
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -41,15 +49,19 @@ class AffiliateHeader extends StatelessWidget {
           title,
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
           ),
         ),
         if (subtitle != null) ...[
-          const SizedBox(height: 2),
+          const SizedBox(height: 4),
           Text(
             subtitle!,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            style: const TextStyle(
+              color: Colors.white70, 
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ],

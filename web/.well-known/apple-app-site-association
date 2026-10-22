@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["REPLACE_WITH_TEAM_ID.com.afyasmart.afyasmart"],
+        "components": [
+          { "/": "/register*" },
+          { "/": "/login*" }
+        ]
+      }
+    ]
+  }
+}

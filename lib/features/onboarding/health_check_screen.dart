@@ -74,7 +74,7 @@ class _HealthCheckScreenState extends ConsumerState<HealthCheckScreen> {
         );
 
     if (!mounted) return;
-    context.push(Routes.symptomChat);
+    context.go(Routes.symptomChat);
   }
 
   void _back() {
@@ -89,6 +89,7 @@ class _HealthCheckScreenState extends ConsumerState<HealthCheckScreen> {
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('[HealthCheckScreen] build - step: $_step');
     final progress = (_step + 1) / _steps.length;
 
     return Scaffold(

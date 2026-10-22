@@ -10,11 +10,27 @@
 -- subscribing to someone else's payment: the filter narrows the stream, the
 -- policy is what secures it.
 
-alter publication supabase_realtime add table public.payment_requests;
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'payment_requests'
+  ) then
+    alter publication supabase_realtime add table public.payment_requests;
+  end if;
 
--- The admin dashboard also watches users, so a new registration or a
--- settled subscription refreshes its counts without a manual reload.
-alter publication supabase_realtime add table public.users;
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'users'
+  ) then
+    alter publication supabase_realtime add table public.users;
+  end if;
+end;
+$$;
 
 -- REPLICA IDENTITY FULL makes the previous row available on UPDATE events.
 -- Without it Postgres sends only the primary key for unchanged columns, and

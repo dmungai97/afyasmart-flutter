@@ -21,11 +21,17 @@ class LockedResultsScreen extends ConsumerStatefulWidget {
 const _unlockFeatures = [
   (
     icon: Icons.format_list_bulleted,
-    text: 'Possible conditions with probabilities',
+    text: 'Possible conditions, most likely first',
   ),
-  (icon: Icons.medical_services_outlined, text: 'Recommended medication & dosage'),
+  (
+    icon: Icons.medical_services_outlined,
+    text: 'Recommended medication & dosage',
+  ),
   (icon: Icons.error_outline, text: 'Urgency level (Low / Medium / High)'),
-  (icon: Icons.location_on_outlined, text: 'Nearby hospitals, doctors & pharmacies'),
+  (
+    icon: Icons.location_on_outlined,
+    text: 'Nearby hospitals, doctors & pharmacies',
+  ),
   (icon: Icons.chat_bubble_outline, text: 'Unlimited AI follow-up chat'),
 ];
 
@@ -69,7 +75,9 @@ class _LockedResultsScreenState extends ConsumerState<LockedResultsScreen>
     // -> symptom-chat -> analysis-loading -> here) regardless of whether the
     // user subscribes next, so this is where onboarding is marked complete.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) ref.read(authControllerProvider.notifier).completeOnboarding();
+      if (mounted) {
+        ref.read(authControllerProvider.notifier).completeOnboarding();
+      }
     });
   }
 
@@ -113,11 +121,11 @@ class _LockedResultsScreenState extends ConsumerState<LockedResultsScreen>
               const SizedBox(height: 32),
               _sectionTitle('Your Results'),
               const SizedBox(height: 12),
-              // Falls back to three generic rows when the store is empty (a
-              // cold start that lost the diagnosis) so the paywall still
-              // reads as a real result rather than a blank panel.
+              // A cold start can lose the diagnosis. This used to show three
+              // made-up rows and "We found 3 possible conditions"; there is
+              // nothing to unlock then, so it says so and offers a new check.
               if (conditions.isEmpty)
-                for (final level in ['Medium', 'High', 'Low']) _lockedRow(level)
+                _missingResults()
               else
                 for (final c in conditions) _lockedRow(c.level),
               const SizedBox(height: 32),
@@ -162,35 +170,53 @@ class _LockedResultsScreenState extends ConsumerState<LockedResultsScreen>
         ),
       ),
       const SizedBox(height: 18),
-      const Text(
-        'Analysis Complete',
-        style: TextStyle(
+      Text(
+        conditionCount > 0 ? 'Analysis Complete' : 'Results not found',
+        style: const TextStyle(
           fontSize: 26,
           fontWeight: FontWeight.w600,
           color: AppColors.ink,
         ),
       ),
       const SizedBox(height: 8),
-      Text.rich(
-        TextSpan(
-          children: [
-            const TextSpan(text: 'We found '),
-            TextSpan(
-              text: '${conditionCount == 0 ? 3 : conditionCount} '
-                  'possible conditions',
-              style: const TextStyle(
-                color: AppColors.ink,
-                fontWeight: FontWeight.w600,
+      if (conditionCount > 0)
+        Text.rich(
+          TextSpan(
+            children: [
+              const TextSpan(text: 'We found '),
+              TextSpan(
+                text:
+                    '$conditionCount possible '
+                    '${conditionCount == 1 ? 'condition' : 'conditions'}',
+                style: const TextStyle(
+                  color: AppColors.ink,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-            const TextSpan(text: ' related to your symptoms'),
-          ],
+              const TextSpan(text: ' related to your symptoms'),
+            ],
+          ),
+          style: const TextStyle(
+            fontSize: 15,
+            color: AppColors.inkMuted,
+            height: 1.5,
+          ),
         ),
-        style: const TextStyle(
-          fontSize: 15,
-          color: AppColors.inkMuted,
-          height: 1.5,
-        ),
+    ],
+  );
+
+  Widget _missingResults() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text(
+        "Your results weren't saved on this device. Run the check again "
+        'to get them.',
+        style: TextStyle(fontSize: 15, color: AppColors.inkMuted, height: 1.5),
+      ),
+      const SizedBox(height: 12),
+      OutlinedButton(
+        onPressed: () => context.go(Routes.symptomChat),
+        child: const Text('Start a new check'),
       ),
     ],
   );
@@ -281,59 +307,53 @@ class _LockedResultsScreenState extends ConsumerState<LockedResultsScreen>
     ),
   );
 
-  Widget _planRow(({String id, String label, String price, String badge}) plan) =>
-      Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: OutlinedButton(
-          onPressed: () => _subscribe(plan.id),
-          style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            side: const BorderSide(color: AppColors.rule),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(Radii.md),
-            ),
-            alignment: Alignment.centerLeft,
-          ),
-          child: Row(
+  Widget _planRow(
+    ({String id, String label, String price, String badge}) plan,
+  ) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: OutlinedButton(
+      onPressed: () => _subscribe(plan.id),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        side: const BorderSide(color: AppColors.rule),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Radii.md),
+        ),
+        alignment: Alignment.centerLeft,
+      ),
+      child: Row(
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    plan.label,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.ink,
-                    ),
-                  ),
-                  Text(
-                    plan.badge,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.inkFaint,
-                    ),
-                  ),
-                ],
-              ),
-              const Spacer(),
               Text(
-                plan.price,
+                plan.label,
                 style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
                   color: AppColors.ink,
-                  fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
-              const SizedBox(width: 8),
-              const Icon(
-                Icons.arrow_forward,
-                size: 16,
-                color: AppColors.inkFaint,
+              Text(
+                plan.badge,
+                style: const TextStyle(fontSize: 11, color: AppColors.inkFaint),
               ),
             ],
           ),
-        ),
-      );
+          const Spacer(),
+          Text(
+            plan.price,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: AppColors.ink,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Icon(Icons.arrow_forward, size: 16, color: AppColors.inkFaint),
+        ],
+      ),
+    ),
+  );
 }

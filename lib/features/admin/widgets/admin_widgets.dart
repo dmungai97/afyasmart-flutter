@@ -1,22 +1,36 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
+import '../../../core/errors.dart';
 import '../../../core/theme.dart';
 
 /// Shared chrome for the admin console.
 
-final _money = NumberFormat.currency(
-  locale: 'en_KE',
-  symbol: 'Ksh ',
-  decimalDigits: 0,
-);
-final _number = NumberFormat.decimalPattern('en');
-final _dateTime = DateFormat('dd MMM, HH:mm', 'en');
+String formatMoney(num value) => 'Ksh ${value.toStringAsFixed(0)}';
+String formatNumber(num value) => value.toString();
 
-String formatMoney(num value) => _money.format(value);
-String formatNumber(num value) => _number.format(value);
-String formatWhen(DateTime? value) =>
-    value == null ? 'Recent' : _dateTime.format(value);
+String formatWhen(DateTime? value) {
+  if (value == null) return 'Recent';
+  final date = value.toLocal();
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final day = date.day.toString().padLeft(2, '0');
+  final month = months[(date.month - 1).clamp(0, 11)];
+  final hour = date.hour.toString().padLeft(2, '0');
+  final minute = date.minute.toString().padLeft(2, '0');
+  return '$day $month, $hour:$minute';
+}
 
 class AdminCard extends StatelessWidget {
   const AdminCard({required this.child, this.padding, super.key});
@@ -52,9 +66,14 @@ class StatCard extends StatelessWidget {
   final IconData? icon;
 
   @override
+  // Sentence-case 12px labels and 12px notes. These were 10px capitals in
+  // inkFaint, below a comfortable reading size for figures someone acts on.
   Widget build(BuildContext context) => AdminCard(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Row(
           children: [
@@ -64,24 +83,25 @@ class StatCard extends StatelessWidget {
             ],
             Expanded(
               child: Text(
-                label.toUpperCase(),
+                label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.inkFaint,
-                  letterSpacing: 0.6,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.inkMuted,
                 ),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Text(
           value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(
-            fontSize: 22,
+            fontSize: 20,
             fontWeight: FontWeight.w700,
             color: AppColors.ink,
             fontFeatures: [FontFeature.tabularFigures()],
@@ -91,7 +111,13 @@ class StatCard extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             sub!,
-            style: const TextStyle(fontSize: 11, color: AppColors.inkMuted),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.inkMuted,
+              height: 1.3,
+            ),
           ),
         ],
       ],
@@ -118,7 +144,8 @@ class StatusPill extends StatelessWidget {
       StatusTone.warning => (
         AppColors.tintWarningBg,
         AppColors.tintWarningBorder,
-        AppColors.accent,
+        // accentInk, not accent: gold text on this tint was about 2:1.
+        AppColors.accentInk,
       ),
       StatusTone.danger => (
         AppColors.tintDangerBg,
@@ -141,11 +168,7 @@ class StatusPill extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          color: fg,
-        ),
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg),
       ),
     );
   }
@@ -179,7 +202,7 @@ class AdminError extends StatelessWidget {
           const Icon(Icons.error_outline, size: 40, color: AppColors.danger),
           const SizedBox(height: 12),
           Text(
-            '$error',
+            errorMessage(error),
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 13, color: AppColors.inkMuted),
           ),

@@ -36,22 +36,44 @@ class _AffiliateWithdrawScreenState
   }
 
   Future<void> _submit(double available) async {
-    final amount = double.tryParse(_amount.text.trim());
-    if (amount == null) {
-      _toast('Enter a valid amount.');
+    final amountText = _amount.text.trim();
+    if (amountText.isEmpty) {
+      _toast('Enter a withdrawal amount.');
+      return;
+    }
+
+    final amount = double.tryParse(amountText);
+    if (amount == null || amount <= 0) {
+      _toast('Enter a valid withdrawal amount.');
+      return;
+    }
+
+    if (amount < AffiliateService.minWithdrawal) {
+      _toast('Minimum withdrawal amount is Ksh 100.');
+      return;
+    }
+
+    if (amount > available) {
+      _toast('Amount exceeds your available balance.');
+      return;
+    }
+
+    final phone = _phone.text.trim();
+    if (phone.isEmpty) {
+      _toast('Enter your M-Pesa phone number.');
       return;
     }
 
     setState(() => _submitting = true);
     final error = await ref
         .read(affiliateControllerProvider.notifier)
-        .requestPayout(amount: amount, phone: _phone.text.trim());
+        .requestPayout(amount: amount, phone: phone);
 
     if (!mounted) return;
     setState(() => _submitting = false);
 
     if (error != null) {
-      _toast(error);
+      _toast(error.replaceAll('ApiException: ', ''));
       return;
     }
 
@@ -67,7 +89,8 @@ class _AffiliateWithdrawScreenState
 
   @override
   Widget build(BuildContext context) {
-    final data = ref.watch(affiliateControllerProvider).requireValue;
+    final data = ref.watch(affiliateControllerProvider).value ??
+        const AffiliateSummary.empty();
 
     return Column(
       children: [

@@ -15,143 +15,65 @@ class AdminService {
   /// by admins and stay small, so only the first two paginate.
   static const pageSize = 50;
 
-  /// Counts rows without transferring any — the equivalent of Firestore's
-  /// getCountFromServer(). Selecting a single narrow column keeps the
-  /// response small even though only the count header is used.
-  Future<int> _countAll(String table) async {
-    final res = await supabase.from(table).select('id').count(CountOption.exact);
-    return res.count;
-  }
-
-  Future<int> _countWhere(String table, String column, Object value) async {
-    final res = await supabase
-        .from(table)
-        .select('id')
-        .eq(column, value)
-        .count(CountOption.exact);
-    return res.count;
-  }
-
   // ── Dashboard ───────────────────────────────────────────────────────────
 
+  /// Totals come from admin_dashboard_stats(), computed in the database over
+  /// customer accounts only. This used to download every paid payment and
+  /// sum it here, which PostgREST's 1000-row cap would have silently
+  /// truncated, and it counted admin accounts as users and subscribers.
+  /// The two short lists are capped queries.
   Future<AdminDashboard> dashboard() async {
-    final counts = await Future.wait([
-      _countAll('users'),
-      _countWhere('users', 'has_subscribed', true),
-      _countAll('doctors'),
-      _countAll('pharmacies'),
-      _countAll('drugs'),
+    final results = await Future.wait<dynamic>([
+      supabase.rpc('admin_dashboard_stats'),
+      supabase
+          .from('users')
+          .select(
+            'id, name, email, subscription_plan, is_subscribed, subscription_expires_at',
+          )
+          .order('created_at', ascending: false)
+          .limit(5),
+      supabase
+          .from('payment_requests')
+          .select('id, phone, user_id, plan, amount, status, paid_at')
+          .eq('status', 'paid')
+          .order('paid_at', ascending: false)
+          .limit(5),
     ]);
 
-    final subscriberRows = await supabase
-        .from('users')
-        .select('subscription_plan, is_subscribed, subscription_expires_at')
-        .eq('is_subscribed', true);
+    final stats = results[0] as Map<String, dynamic>;
+    final recentRows = results[1] as List<dynamic>;
+    final paidRows = results[2] as List<dynamic>;
 
-    var daily = 0;
-    var weekly = 0;
-    var monthly = 0;
-    var activeUsers = 0;
-
-    for (final row in subscriberRows) {
-      if (!isActiveSubscription(row)) continue;
-      activeUsers++;
-      switch (row['subscription_plan']) {
-        case 'daily':
-          daily++;
-        case 'weekly':
-          weekly++;
-        case 'monthly':
-          monthly++;
-      }
-    }
-
-    // Monday-first week, matching the RN dashboard's bucketing.
-    final now = DateTime.now();
-    final startOfWeek = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    ).subtract(Duration(days: now.weekday - 1));
+    int count(String key) => (stats[key] as num?)?.toInt() ?? 0;
+    double money(String key) => (stats[key] as num?)?.toDouble() ?? 0;
 
     final weeklyRevenue = List<double>.filled(7, 0);
     final weeklySubscribers = List<int>.filled(7, 0);
-
-    final paidRows = await supabase
-        .from('payment_requests')
-        .select(
-          'id, phone, user_id, plan, amount, status, paid_at, created_at, updated_at',
-        )
-        .eq('paid', true);
-
-    var totalRevenue = 0.0;
-    final transactions = <AdminTransaction>[];
-
-    for (final row in paidRows) {
-      final amount = paymentAmount(row);
-      totalRevenue += amount;
-
-      final at = parseDate(row['paid_at']) ?? parseDate(row['created_at']);
-      if (at != null && !at.isBefore(startOfWeek)) {
-        final index = at.weekday - 1;
-        if (index >= 0 && index < 7) {
-          weeklyRevenue[index] += amount;
-          weeklySubscribers[index] += 1;
-        }
-      }
-
-      transactions.add(
-        AdminTransaction(
-          id: row['id'] as String,
-          name: row['phone'] as String? ?? row['user_id'] as String? ?? 'Payment',
-          type: row['plan'] == null
-              ? 'Subscription'
-              : '${row['plan']} subscription',
-          amount: amount,
-          status: row['status'] as String? ?? 'paid',
-          at: at ?? parseDate(row['updated_at']),
-        ),
-      );
+    for (final day in (stats['week'] as List?) ?? const []) {
+      final index = (day['day'] as num).toInt();
+      if (index < 0 || index > 6) continue;
+      weeklyRevenue[index] = (day['revenue'] as num).toDouble();
+      weeklySubscribers[index] = (day['payments'] as num).toInt();
     }
-
-    final pendingRows = await supabase
-        .from('payment_requests')
-        .select('amount, plan')
-        .eq('status', 'pending');
-
-    final pendingValue = pendingRows.fold<double>(
-      0,
-      (sum, row) => sum + paymentAmount(row),
-    );
-
-    final recentRows = await supabase
-        .from('users')
-        .select(
-          'id, name, email, subscription_plan, is_subscribed, subscription_expires_at',
-        )
-        .order('created_at', ascending: false)
-        .limit(5);
-
-    transactions.sort((a, b) {
-      final at = a.at, bt = b.at;
-      if (at == null || bt == null) return 0;
-      return bt.compareTo(at);
-    });
 
     return AdminDashboard(
       metrics: AdminMetrics(
-        totalUsers: counts[0],
-        subscriptions: counts[1],
-        doctors: counts[2],
-        pharmacies: counts[3],
-        drugs: counts[4],
-        activeUsers: activeUsers,
-        totalRevenue: totalRevenue,
-        pendingPayouts: pendingRows.length,
-        pendingPayoutsValue: pendingValue,
-        daily: daily,
-        weekly: weekly,
-        monthly: monthly,
+        totalUsers: count('total_users'),
+        activeUsers: count('active_subscribers'),
+        doctors: count('doctors'),
+        pharmacies: count('pharmacies'),
+        hospitals: count('hospitals'),
+        hospitalsUnverified: count('hospitals_unverified'),
+        drugs: count('drugs'),
+        totalRevenue: money('revenue'),
+        paidPayments: count('paid_payments'),
+        pendingPayments: count('pending_payments'),
+        pendingPaymentsValue: money('pending_value'),
+        payoutsToApprove: count('payouts_to_approve'),
+        payoutsToApproveValue: money('payouts_to_approve_value'),
+        daily: count('daily'),
+        weekly: count('weekly'),
+        monthly: count('monthly'),
       ),
       recentUsers: [
         for (final row in recentRows)
@@ -163,7 +85,22 @@ class AdminService {
             subscribed: isActiveSubscription(row),
           ),
       ],
-      recentTransactions: transactions.take(5).toList(),
+      recentTransactions: [
+        for (final row in paidRows)
+          AdminTransaction(
+            id: row['id'] as String,
+            name:
+                row['phone'] as String? ??
+                row['user_id'] as String? ??
+                'Payment',
+            type: row['plan'] == null
+                ? 'Subscription'
+                : '${row['plan']} subscription',
+            amount: paymentAmount(row),
+            status: row['status'] as String? ?? 'paid',
+            at: parseDate(row['paid_at']),
+          ),
+      ],
       weeklyRevenue: weeklyRevenue,
       weeklySubscribers: weeklySubscribers,
     );
@@ -208,7 +145,9 @@ class AdminService {
           'p_role': role,
           'p_is_subscribed': isSubscribed,
           'p_subscription_plan': plan,
-          'p_subscription_expires_at': expiresAt?.toIso8601String(),
+          // toUtc: a local DateTime serialises without an offset, which the
+          // database reads as UTC, ending a Nairobi grant three hours early.
+          'p_subscription_expires_at': expiresAt?.toUtc().toIso8601String(),
         },
       );
     } on PostgrestException catch (e) {
@@ -222,16 +161,17 @@ class AdminService {
     final results = await Future.wait([
       supabase.from('doctors').select(),
       supabase.from('pharmacies').select(),
+      supabase.from('hospitals').select(),
     ]);
 
     return [
       ...results[0].map(AdminFacility.doctor),
       ...results[1].map(AdminFacility.pharmacy),
+      ...results[2].map(AdminFacility.hospital),
     ];
   }
 
-  String _table(FacilityKind kind) =>
-      kind == FacilityKind.doctor ? 'doctors' : 'pharmacies';
+  String _table(FacilityKind kind) => kind.table;
 
   Future<void> addFacility(FacilityKind kind, Map<String, dynamic> data) async {
     try {

@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/symptoms_service.dart';
+import 'auth_controller.dart';
+import 'providers.dart';
 
 /// Port of src/store/diagnosisStore.ts.
 ///
@@ -15,16 +17,17 @@ import '../services/symptoms_service.dart';
 /// silently drops the user's answers and the screens fall back to generic
 /// placeholder data instead of their actual results.
 
+/// No percentage: the model used to invent one ("Malaria 80%"), which read
+/// as a measured probability. Older stored rows still carry a 'probability'
+/// key; it is ignored.
 class DiagnosisCondition {
   const DiagnosisCondition({
     required this.name,
-    required this.probability,
     required this.level,
     required this.color,
   });
 
   final String name;
-  final int probability;
 
   /// 'High' | 'Medium' | 'Low'
   final String level;
@@ -34,7 +37,6 @@ class DiagnosisCondition {
 
   Map<String, dynamic> toJson() => {
     'name': name,
-    'probability': probability,
     'level': level,
     'color': color,
   };
@@ -42,7 +44,6 @@ class DiagnosisCondition {
   factory DiagnosisCondition.fromJson(Map<String, dynamic> json) =>
       DiagnosisCondition(
         name: json['name'] as String? ?? '',
-        probability: (json['probability'] as num?)?.toInt() ?? 0,
         level: json['level'] as String? ?? 'Low',
         color: json['color'] as String? ?? '#0B6E6E',
       );
@@ -176,12 +177,19 @@ class DiagnosisState {
     this.pendingDiagnosis,
     this.healthCheckAnswers,
     this.pendingAnalysisRequest,
+    this.unsavedToHistory = false,
     this.hydrated = false,
   });
 
   final PendingDiagnosis? pendingDiagnosis;
   final HealthCheckAnswers? healthCheckAnswers;
   final PendingAnalysisRequest? pendingAnalysisRequest;
+
+  /// The pending diagnosis came from an onboarding check run before there was
+  /// an account to own it, and still has to be added to the history once the
+  /// user signs in. The chat reads that history for context, so without this
+  /// the user's first conversation would know nothing about their check.
+  final bool unsavedToHistory;
 
   /// SharedPreferences reads are async, so there is a brief window on start
   /// where this still holds its defaults before the persisted blob loads. A
@@ -194,9 +202,19 @@ class DiagnosisState {
 class DiagnosisController extends Notifier<DiagnosisState> {
   static const _key = 'afyasmart-diagnosis';
 
+  /// An onboarding result older than this is not attached to whoever signs
+  /// in next: by then it is as likely to be someone else's check on a shared
+  /// phone as the new account's own.
+  static const _historyClaimWindow = Duration(hours: 24);
+
+  bool _flushing = false;
+
   @override
   DiagnosisState build() {
-    unawaited(_load());
+    ref.listen(authControllerProvider.select((s) => s.user?.id), (_, id) {
+      if (id != null) unawaited(_flushToHistory());
+    });
+    unawaited(_load().then((_) => _flushToHistory()));
     return const DiagnosisState();
   }
 
@@ -228,6 +246,7 @@ class DiagnosisController extends Notifier<DiagnosisState> {
             : PendingAnalysisRequest.fromJson(
                 json['pendingAnalysisRequest'] as Map<String, dynamic>,
               ),
+        unsavedToHistory: json['unsavedToHistory'] == true,
       );
     } on Object {
       // A malformed blob (an older shape, a truncated write) must not brick
@@ -245,6 +264,7 @@ class DiagnosisController extends Notifier<DiagnosisState> {
         'pendingDiagnosis': state.pendingDiagnosis?.toJson(),
         'healthCheckAnswers': state.healthCheckAnswers?.toJson(),
         'pendingAnalysisRequest': state.pendingAnalysisRequest?.toJson(),
+        'unsavedToHistory': state.unsavedToHistory,
       }),
     );
   }
@@ -255,6 +275,7 @@ class DiagnosisController extends Notifier<DiagnosisState> {
       pendingDiagnosis: state.pendingDiagnosis,
       healthCheckAnswers: answers,
       pendingAnalysisRequest: state.pendingAnalysisRequest,
+      unsavedToHistory: state.unsavedToHistory,
     );
     await _persist();
   }
@@ -265,18 +286,78 @@ class DiagnosisController extends Notifier<DiagnosisState> {
       pendingDiagnosis: state.pendingDiagnosis,
       healthCheckAnswers: state.healthCheckAnswers,
       pendingAnalysisRequest: request,
+      unsavedToHistory: state.unsavedToHistory,
     );
     await _persist();
   }
 
-  Future<void> setPendingDiagnosis(PendingDiagnosis diagnosis) async {
+  Future<void> setPendingDiagnosis(
+    PendingDiagnosis diagnosis, {
+    bool unsavedToHistory = false,
+  }) async {
     state = DiagnosisState(
       hydrated: true,
       pendingDiagnosis: diagnosis,
       healthCheckAnswers: state.healthCheckAnswers,
       pendingAnalysisRequest: state.pendingAnalysisRequest,
+      unsavedToHistory: unsavedToHistory,
     );
     await _persist();
+  }
+
+  /// An onboarding check's result. Shown like any other, and added to the
+  /// account's history as soon as there is a signed-in user to own it —
+  /// immediately if there already is one.
+  Future<void> recordOnboardingDiagnosis(PendingDiagnosis diagnosis) async {
+    await setPendingDiagnosis(diagnosis, unsavedToHistory: true);
+    await _flushToHistory();
+  }
+
+  /// Saves an onboarding result that is still waiting for an account. Safe to
+  /// call at any time; it does nothing unless there is such a result and a
+  /// signed-in user. A failed insert keeps the flag so the next sign-in or
+  /// app start retries it.
+  Future<void> _flushToHistory() async {
+    final diagnosis = state.pendingDiagnosis;
+    if (_flushing || !state.hydrated || !state.unsavedToHistory) return;
+    if (diagnosis == null) return;
+    if (ref.read(authControllerProvider).user == null) return;
+
+    _flushing = true;
+    try {
+      final fresh =
+          DateTime.now().difference(diagnosis.preparedAt) < _historyClaimWindow;
+      if (fresh) {
+        await ref
+            .read(diagnosisHistoryServiceProvider)
+            .save(diagnosis.toJson());
+        ref.invalidate(diagnosisHistoryProvider);
+      }
+      // Only clear the flag if the result we saved is still the current one.
+      if (identical(state.pendingDiagnosis, diagnosis)) {
+        await setPendingDiagnosis(diagnosis);
+      }
+    } on Exception {
+      // Retried on the next sign-in or app start.
+    } finally {
+      _flushing = false;
+    }
+  }
+
+  /// A signed-in symptom check: becomes the latest result shown on the
+  /// diagnosis-results screen and is added to the account's history.
+  ///
+  /// The history write is best-effort. The result is already on screen and
+  /// stored locally, so a failed insert must not turn a successful analysis
+  /// into an error.
+  Future<void> recordDiagnosis(PendingDiagnosis diagnosis) async {
+    await setPendingDiagnosis(diagnosis);
+    try {
+      await ref.read(diagnosisHistoryServiceProvider).save(diagnosis.toJson());
+      ref.invalidate(diagnosisHistoryProvider);
+    } on Exception {
+      // See above.
+    }
   }
 
   Future<void> clearPendingAnalysisRequest() async {
@@ -284,6 +365,7 @@ class DiagnosisController extends Notifier<DiagnosisState> {
       hydrated: true,
       pendingDiagnosis: state.pendingDiagnosis,
       healthCheckAnswers: state.healthCheckAnswers,
+      unsavedToHistory: state.unsavedToHistory,
     );
     await _persist();
   }
@@ -296,12 +378,30 @@ class DiagnosisController extends Notifier<DiagnosisState> {
     );
     await _persist();
   }
+
+  Future<void> clearAll() async {
+    state = const DiagnosisState(hydrated: true);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_key);
+  }
 }
 
 final diagnosisControllerProvider =
     NotifierProvider<DiagnosisController, DiagnosisState>(
       DiagnosisController.new,
     );
+
+/// The signed-in user's past symptom checks, newest first. Keyed on the user
+/// id so signing in as someone else never shows the previous account's rows.
+final diagnosisHistoryProvider = FutureProvider<List<PendingDiagnosis>>((
+  ref,
+) async {
+  final userId = ref.watch(authControllerProvider.select((s) => s.user?.id));
+  if (userId == null) return const [];
+
+  final rows = await ref.read(diagnosisHistoryServiceProvider).list();
+  return rows.map(PendingDiagnosis.fromJson).toList();
+});
 
 /// Maps the health-check answers onto the fields the analysis endpoint wants.
 /// Ported from the lookup tables at the top of SymptomChatScreen.tsx.
@@ -339,143 +439,5 @@ extension PendingAnalysisRequestCall on PendingAnalysisRequest {
     duration: duration,
     severity: severity,
     answers: answers,
-  );
-}
-
-/// Port of buildDiagnosisFromSymptoms() in diagnosisStore.ts.
-///
-/// A keyword heuristic used only as a fallback when a screen needs something
-/// to render and the stored analysis is gone (a cold start that lost it).
-/// It is not a diagnosis and never reaches the AI — it exists so the results
-/// screen shows a plausible shape rather than an empty panel.
-PendingDiagnosis buildDiagnosisFromSymptoms(String symptoms) {
-  final text = symptoms.toLowerCase();
-  bool has(List<String> words) => words.any(text.contains);
-
-  final hasFever = has(['fever', 'chills', 'sweat']);
-  final hasCough = has(['cough', 'cold', 'throat']);
-  final hasStomach = has(['stomach', 'diarrhea', 'vomit', 'nausea']);
-  final hasChest = has(['chest', 'breath']);
-
-  final urgency = hasChest
-      ? 'High'
-      : (hasFever || hasStomach)
-      ? 'Medium'
-      : 'Low';
-
-  const red = '#DC2626';
-  const amber = '#D97706';
-  const teal = '#0B6E6E';
-
-  final conditions = hasStomach
-      ? const [
-          DiagnosisCondition(
-            name: 'Gastroenteritis or food poisoning',
-            probability: 72,
-            level: 'High',
-            color: red,
-          ),
-          DiagnosisCondition(
-            name: 'Acid reflux or gastritis',
-            probability: 48,
-            level: 'Medium',
-            color: amber,
-          ),
-          DiagnosisCondition(
-            name: 'Typhoid or other infection',
-            probability: 31,
-            level: 'Low',
-            color: teal,
-          ),
-        ]
-      : hasCough
-      ? const [
-          DiagnosisCondition(
-            name: 'Flu or upper respiratory infection',
-            probability: 76,
-            level: 'High',
-            color: red,
-          ),
-          DiagnosisCondition(
-            name: 'Allergic irritation',
-            probability: 42,
-            level: 'Medium',
-            color: amber,
-          ),
-          DiagnosisCondition(
-            name: 'Bronchitis',
-            probability: 28,
-            level: 'Low',
-            color: teal,
-          ),
-        ]
-      : hasFever
-      ? const [
-          DiagnosisCondition(
-            name: 'Malaria or viral fever',
-            probability: 68,
-            level: 'High',
-            color: red,
-          ),
-          DiagnosisCondition(
-            name: 'Flu-like illness',
-            probability: 47,
-            level: 'Medium',
-            color: amber,
-          ),
-          DiagnosisCondition(
-            name: 'Bacterial infection',
-            probability: 24,
-            level: 'Low',
-            color: teal,
-          ),
-        ]
-      : const [
-          DiagnosisCondition(
-            name: 'General viral illness',
-            probability: 61,
-            level: 'High',
-            color: red,
-          ),
-          DiagnosisCondition(
-            name: 'Fatigue or dehydration',
-            probability: 39,
-            level: 'Medium',
-            color: amber,
-          ),
-          DiagnosisCondition(
-            name: 'Stress-related symptoms',
-            probability: 22,
-            level: 'Low',
-            color: teal,
-          ),
-        ];
-
-  return PendingDiagnosis(
-    symptoms: symptoms,
-    urgency: urgency,
-    conditions: conditions,
-    preparedAt: DateTime.now(),
-    summary:
-        'Your symptoms have been analysed against common patterns. This is '
-        'not a final medical diagnosis, but it helps you decide what to do next.',
-    medications: [
-      const DiagnosisMedication(
-        name: 'Paracetamol 500mg',
-        note: 'For fever or pain. Follow label directions and avoid overdose.',
-      ),
-      const DiagnosisMedication(
-        name: 'Oral rehydration salts',
-        note:
-            'Useful if you have vomiting, diarrhea, fever, or signs of '
-            'dehydration.',
-      ),
-      DiagnosisMedication(
-        name: 'Doctor review',
-        note: urgency == 'High'
-            ? 'Recommended urgently because of your symptom pattern.'
-            : 'Recommended if symptoms persist or worsen.',
-      ),
-    ],
   );
 }

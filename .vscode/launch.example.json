@@ -1,0 +1,31 @@
+{
+  // Copy this file to launch.json (which is gitignored) and fill in the
+  // values. Keys stay out of the repo: GitHub push protection rejects
+  // Mapbox tokens, and the rest belong to this project's accounts.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "AfyaSmart",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": [
+        // Mapbox public token (map screen). Mapbox account -> Tokens.
+        "--dart-define", "ACCESS_TOKEN=pk.YOUR_MAPBOX_TOKEN",
+
+        // Firebase, used only to receive push notifications. All from the
+        // Firebase console: Project settings -> General -> Your apps.
+        // Empty values leave push off; the app runs normally without them.
+        "--dart-define", "FIREBASE_PROJECT_ID=",       // "Project ID"
+        "--dart-define", "FIREBASE_SENDER_ID=",        // "Project number"
+        "--dart-define", "FIREBASE_API_KEY=",          // Android app's "Web API key" / current_key in google-services.json
+        "--dart-define", "FIREBASE_ANDROID_APP_ID=",   // Android app's "App ID" (1:...:android:...)
+        "--dart-define", "FIREBASE_IOS_APP_ID=",       // iOS app's "App ID" (1:...:ios:...)
+
+        // Google sign-in. Google Cloud console -> APIs & Services -> Credentials.
+        "--dart-define", "GOOGLE_SERVER_CLIENT_ID=",   // the *Web* OAuth client ID, also on Android
+        "--dart-define", "GOOGLE_IOS_CLIENT_ID="       // the iOS OAuth client ID
+      ]
+    }
+  ]
+}
