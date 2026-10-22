@@ -30,6 +30,10 @@ class AdminDashboardScreen extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            if (data.metrics.payoutsToApprove > 0) ...[
+              _attention(context, data.metrics),
+              const SizedBox(height: 16),
+            ],
             _metricGrid(context, data.metrics),
             const SizedBox(height: 16),
             _InteractiveWeekChart(data: data),
@@ -49,47 +53,54 @@ class AdminDashboardScreen extends ConsumerWidget {
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 600;
 
+    // Each label says exactly what is counted. "Total revenue · 2
+    // subscribers" beside "Subscribers 1" looked like a bug (ever paid vs
+    // active), and "Pending" read as payouts when it counts M-Pesa payments.
     final cards = [
       StatCard(
-        label: 'Total revenue',
+        label: 'Revenue',
         value: formatMoney(m.totalRevenue),
-        sub: '${m.subscriptions} subscribers',
+        sub: 'From ${_count(m.paidPayments, 'paid payment')}',
         icon: Icons.payments_outlined,
       ),
       StatCard(
-        label: 'Subscribers',
+        label: 'Active subscribers',
         value: formatNumber(m.activeUsers),
-        sub: 'D: ${m.daily} · W: ${m.weekly} · M: ${m.monthly}',
+        sub: 'Daily ${m.daily} · Weekly ${m.weekly} · Monthly ${m.monthly}',
         icon: Icons.verified_user_outlined,
       ),
       StatCard(
         label: 'Conversion',
         value: '${m.conversionRate}%',
-        sub: '${formatNumber(m.totalUsers)} users',
+        sub: '${m.activeUsers} of ${_count(m.totalUsers, 'user')} subscribed',
         icon: Icons.trending_up,
       ),
       StatCard(
-        label: 'Pending',
-        value: formatMoney(m.pendingPayoutsValue),
-        sub: '${m.pendingPayouts} awaiting',
+        label: 'Awaiting M-Pesa',
+        value: formatMoney(m.pendingPaymentsValue),
+        sub: '${_count(m.pendingPayments, 'payment')} not yet confirmed',
         icon: Icons.hourglass_empty,
       ),
       StatCard(
         label: 'Facilities',
         value: formatNumber(m.totalFacilities),
-        sub: '${m.doctors} doc · ${m.pharmacies} pharm',
+        sub: m.hospitalsUnverified > 0
+            ? '${m.hospitalsUnverified} hospitals to check'
+            : 'Doctors ${m.doctors} · Pharmacies ${m.pharmacies} · '
+                  'Hospitals ${m.hospitals}',
         icon: Icons.local_hospital_outlined,
       ),
       StatCard(
-        label: 'Drugs',
+        label: 'Medicines',
         value: formatNumber(m.drugs),
-        sub: 'Available entries',
+        sub: 'In the catalogue',
         icon: Icons.medication_outlined,
       ),
     ];
 
     final columns = isMobile ? 2 : (width >= 900 ? 3 : 2);
-    final aspectRatio = isMobile ? 1.8 : 2.2;
+    // Room for a two-line note at the larger text size.
+    final aspectRatio = isMobile ? 1.5 : 2.0;
 
     return GridView.count(
       crossAxisCount: columns,
@@ -101,6 +112,68 @@ class AdminDashboardScreen extends ConsumerWidget {
       children: cards,
     );
   }
+
+  static String _count(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
+
+  /// The one thing on the dashboard waiting on the admin: affiliate payouts
+  /// to approve or reject. Shown only when there are some.
+  Widget _attention(BuildContext context, AdminMetrics m) => Material(
+    color: AppColors.tintWarningBg,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(Radii.md),
+      side: const BorderSide(color: AppColors.tintWarningBorder),
+    ),
+    child: InkWell(
+      onTap: () => context.go(Routes.adminPayouts),
+      borderRadius: BorderRadius.circular(Radii.md),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.pending_actions_outlined,
+              size: 22,
+              color: AppColors.accentInk,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Needs your attention',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.accentInk,
+                    ),
+                  ),
+                  Text(
+                    '${_count(m.payoutsToApprove, 'payout')} to approve · '
+                    '${formatMoney(m.payoutsToApproveValue)}',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Text(
+              'Review',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppColors.ink,
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: AppColors.ink),
+          ],
+        ),
+      ),
+    ),
+  );
 
   Widget _quickActions(BuildContext context) => AdminCard(
     child: Column(
@@ -169,12 +242,13 @@ class AdminDashboardScreen extends ConsumerWidget {
     String route,
   ) => OutlinedButton.icon(
     onPressed: () => context.go(route),
-    icon: Icon(icon, size: 16),
+    icon: Icon(icon, size: 18),
     label: Text(label),
+    // Full 48px targets; these were about 24px tall with 12px text.
     style: OutlinedButton.styleFrom(
-      minimumSize: Size.zero,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+      minimumSize: const Size(0, 48),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
     ),
   );
 
@@ -194,7 +268,7 @@ class AdminDashboardScreen extends ConsumerWidget {
         if (data.recentUsers.isEmpty)
           const Text(
             'No users yet.',
-            style: TextStyle(fontSize: 12, color: AppColors.inkMuted),
+            style: TextStyle(fontSize: 13, color: AppColors.inkMuted),
           )
         else
           for (final u in data.recentUsers)
@@ -221,7 +295,7 @@ class AdminDashboardScreen extends ConsumerWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontSize: 11,
+                            fontSize: 13,
                             color: AppColors.inkMuted,
                           ),
                         ),
@@ -257,7 +331,7 @@ class AdminDashboardScreen extends ConsumerWidget {
         if (data.recentTransactions.isEmpty)
           const Text(
             'No payments yet.',
-            style: TextStyle(fontSize: 12, color: AppColors.inkMuted),
+            style: TextStyle(fontSize: 13, color: AppColors.inkMuted),
           )
         else
           for (final t in data.recentTransactions)
@@ -284,7 +358,7 @@ class AdminDashboardScreen extends ConsumerWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontSize: 11,
+                            fontSize: 13,
                             color: AppColors.inkMuted,
                           ),
                         ),
@@ -348,8 +422,12 @@ class _InteractiveWeekChartState extends State<_InteractiveWeekChart> {
 
     final selected = _selectedDayIndex;
     final selectedDayName = selected != null ? fullDays[selected] : null;
-    final selectedRev = selected != null ? widget.data.weeklyRevenue[selected] : null;
-    final selectedSubs = selected != null ? widget.data.weeklySubscribers[selected] : null;
+    final selectedRev = selected != null
+        ? widget.data.weeklyRevenue[selected]
+        : null;
+    final selectedSubs = selected != null
+        ? widget.data.weeklySubscribers[selected]
+        : null;
 
     return AdminCard(
       child: Column(
@@ -374,7 +452,7 @@ class _InteractiveWeekChartState extends State<_InteractiveWeekChart> {
                   Text(
                     '${formatMoney(totalRevenue)} from $totalPayments payments',
                     style: const TextStyle(
-                      fontSize: 11,
+                      fontSize: 13,
                       color: AppColors.inkMuted,
                     ),
                   ),
@@ -398,13 +476,17 @@ class _InteractiveWeekChartState extends State<_InteractiveWeekChart> {
                         Text(
                           '$selectedDayName: ${formatMoney(selectedRev!)} ($selectedSubs)',
                           style: const TextStyle(
-                            fontSize: 11,
+                            fontSize: 12,
                             fontWeight: FontWeight.w700,
                             color: AppColors.ink,
                           ),
                         ),
                         const SizedBox(width: 4),
-                        const Icon(Icons.close, size: 12, color: AppColors.inkMuted),
+                        const Icon(
+                          Icons.close,
+                          size: 14,
+                          color: AppColors.inkMuted,
+                        ),
                       ],
                     ),
                   ),
@@ -412,96 +494,105 @@ class _InteractiveWeekChartState extends State<_InteractiveWeekChart> {
             ],
           ),
           const SizedBox(height: 16),
-          SizedBox(
-            height: 125,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                for (var i = 0; i < 7; i++) ...[
-                  Builder(
-                    builder: (_) {
-                      final isSelected = selected == i;
-                      final rev = widget.data.weeklyRevenue[i];
-                      final barHeight = peak == 0
-                          ? 4.0
-                          : (rev / peak * 70).clamp(4.0, 70.0);
+          // Seven flat bars said "nothing" while taking 125px; say it in words.
+          if (totalPayments == 0)
+            const Text(
+              'No payments yet this week.',
+              style: TextStyle(fontSize: 14, color: AppColors.inkMuted),
+            )
+          else
+            SizedBox(
+              height: 125,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  for (var i = 0; i < 7; i++) ...[
+                    Builder(
+                      builder: (_) {
+                        final isSelected = selected == i;
+                        final rev = widget.data.weeklyRevenue[i];
+                        final barHeight = peak == 0
+                            ? 4.0
+                            : (rev / peak * 70).clamp(4.0, 70.0);
 
-                      return Expanded(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () {
-                            setState(() {
-                              _selectedDayIndex = isSelected ? null : i;
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 3),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                Text(
-                                  rev == 0 ? '' : formatMoney(rev),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: isSelected
-                                        ? FontWeight.w700
-                                        : FontWeight.normal,
-                                    color: isSelected
-                                        ? AppColors.ink
-                                        : AppColors.inkFaint,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                AnimatedContainer(
-                                  duration: const Duration(milliseconds: 200),
-                                  height: barHeight,
-                                  decoration: BoxDecoration(
-                                    color: isSelected
-                                        ? AppColors.ink
-                                        : (rev > 0
-                                            ? AppColors.ruleStrong
-                                            : AppColors.rule),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 5,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: isSelected
-                                        ? AppColors.ink
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    days[i],
+                        return Expanded(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              setState(() {
+                                _selectedDayIndex = isSelected ? null : i;
+                              });
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 3,
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    rev == 0 ? '' : formatMoney(rev),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                      fontSize: 10,
+                                      fontSize: 11,
                                       fontWeight: isSelected
                                           ? FontWeight.w700
-                                          : FontWeight.w500,
+                                          : FontWeight.normal,
                                       color: isSelected
-                                          ? AppColors.paper
-                                          : AppColors.inkMuted,
+                                          ? AppColors.ink
+                                          : AppColors.inkFaint,
                                     ),
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(height: 4),
+                                  AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    height: barHeight,
+                                    decoration: BoxDecoration(
+                                      color: isSelected
+                                          ? AppColors.ink
+                                          : (rev > 0
+                                                ? AppColors.ruleStrong
+                                                : AppColors.rule),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 5,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: isSelected
+                                          ? AppColors.ink
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      days[i],
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: isSelected
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
+                                        color: isSelected
+                                            ? AppColors.paper
+                                            : AppColors.inkMuted,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    },
-                  ),
+                        );
+                      },
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
         ],
       ),
     );

@@ -41,6 +41,30 @@ class AdminShell extends ConsumerWidget {
     ),
   ];
 
+  Future<void> _confirmSignOut(BuildContext context, WidgetRef ref) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign out?'),
+        content: const Text(
+          'You will need to sign in again to use the admin console.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+            child: const Text('Sign out'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await ref.read(authControllerProvider.notifier).logout();
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final location = GoRouterState.of(context).matchedLocation;
@@ -59,23 +83,23 @@ class AdminShell extends ConsumerWidget {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
+          // A home icon, not exit_to_app: that sat beside logout looking
+          // almost the same, one tap from signing out by accident.
           IconButton(
             tooltip: 'Back to app',
             onPressed: () => context.go(Routes.home),
-            icon: const Icon(Icons.exit_to_app),
+            icon: const Icon(Icons.home_outlined),
           ),
           IconButton(
             tooltip: 'Sign out',
-            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+            onPressed: () => _confirmSignOut(context, ref),
             icon: const Icon(Icons.logout),
           ),
         ],
       ),
       drawer: wide
           ? null
-          : Drawer(
-              child: _nav(context, location, isDrawer: true),
-            ),
+          : Drawer(child: _nav(context, location, isDrawer: true)),
       body: wide
           ? Row(
               children: [
@@ -195,8 +219,9 @@ class AdminShell extends ConsumerWidget {
                         item.label,
                         style: TextStyle(
                           fontSize: 14,
-                          fontWeight:
-                              focused ? FontWeight.w700 : FontWeight.w500,
+                          fontWeight: focused
+                              ? FontWeight.w700
+                              : FontWeight.w500,
                           color: focused ? AppColors.ink : AppColors.inkMuted,
                         ),
                       ),

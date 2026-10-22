@@ -156,11 +156,14 @@ class AdminPayoutsScreen extends ConsumerWidget {
       ref.invalidate(adminPayoutsProvider);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(approve ? 'Payout marked paid.' : 'Payout rejected.')),
+        SnackBar(
+          content: Text(approve ? 'Payout marked paid.' : 'Payout rejected.'),
+        ),
       );
     } on Exception catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMessage(e))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(errorMessage(e))));
     }
   }
 }

@@ -27,13 +27,17 @@ class AdminMetrics {
   const AdminMetrics({
     this.totalUsers = 0,
     this.activeUsers = 0,
-    this.subscriptions = 0,
     this.doctors = 0,
     this.pharmacies = 0,
     this.drugs = 0,
+    this.hospitals = 0,
+    this.hospitalsUnverified = 0,
     this.totalRevenue = 0,
-    this.pendingPayouts = 0,
-    this.pendingPayoutsValue = 0,
+    this.paidPayments = 0,
+    this.pendingPayments = 0,
+    this.pendingPaymentsValue = 0,
+    this.payoutsToApprove = 0,
+    this.payoutsToApproveValue = 0,
     this.daily = 0,
     this.weekly = 0,
     this.monthly = 0,
@@ -41,18 +45,31 @@ class AdminMetrics {
 
   final int totalUsers;
   final int activeUsers;
-  final int subscriptions;
   final int doctors;
   final int pharmacies;
   final int drugs;
+  final int hospitals;
+
+  /// Hospitals an admin has not checked yet, so patients cannot see them.
+  final int hospitalsUnverified;
   final double totalRevenue;
-  final int pendingPayouts;
-  final double pendingPayoutsValue;
+
+  /// Paid M-Pesa payments, the source of [totalRevenue].
+  final int paidPayments;
+
+  /// M-Pesa payments started but not yet confirmed by the customer. Was
+  /// named pendingPayouts, which read as affiliate payouts awaiting approval.
+  final int pendingPayments;
+  final double pendingPaymentsValue;
+
+  /// Affiliate payout requests waiting for an admin's decision.
+  final int payoutsToApprove;
+  final double payoutsToApproveValue;
   final int daily;
   final int weekly;
   final int monthly;
 
-  int get totalFacilities => doctors + pharmacies;
+  int get totalFacilities => doctors + pharmacies + hospitals;
 
   double get conversionRate => totalUsers == 0
       ? 0
@@ -158,7 +175,17 @@ class AdminUserRow {
   );
 }
 
-enum FacilityKind { doctor, pharmacy }
+enum FacilityKind {
+  doctor('doctors', 'doctor', 'doctors'),
+  pharmacy('pharmacies', 'pharmacy', 'pharmacies'),
+  hospital('hospitals', 'hospital', 'hospitals');
+
+  const FacilityKind(this.table, this.singular, this.plural);
+
+  final String table;
+  final String singular;
+  final String plural;
+}
 
 class AdminFacility {
   const AdminFacility({
@@ -168,6 +195,8 @@ class AdminFacility {
     required this.location,
     required this.phone,
     required this.email,
+    this.latitude,
+    this.longitude,
     this.specialization,
     this.hospital,
     this.rating,
@@ -177,6 +206,7 @@ class AdminFacility {
     this.openingHours,
     this.open24hrs,
     this.open,
+    this.verified,
   });
 
   final int id;
@@ -185,6 +215,10 @@ class AdminFacility {
   final String location;
   final String phone;
   final String email;
+
+  /// Where the map pins it. Null until set: the map skips anything without.
+  final double? latitude;
+  final double? longitude;
 
   // Doctor only.
   final String? specialization;
@@ -199,6 +233,10 @@ class AdminFacility {
   final bool? open24hrs;
   final bool? open;
 
+  // Hospital only: whether an admin has checked it. Patients see only
+  // verified hospitals.
+  final bool? verified;
+
   factory AdminFacility.doctor(Map<String, dynamic> row) => AdminFacility(
     id: (row['id'] as num).toInt(),
     kind: FacilityKind.doctor,
@@ -206,6 +244,8 @@ class AdminFacility {
     location: row['location'] as String? ?? '',
     phone: row['phone'] as String? ?? '',
     email: row['email'] as String? ?? '',
+    latitude: (row['latitude'] as num?)?.toDouble(),
+    longitude: (row['longitude'] as num?)?.toDouble(),
     specialization: row['specialization'] as String? ?? '',
     hospital: row['hospital'] as String? ?? '',
     rating: (row['rating'] as num?)?.toDouble() ?? 0,
@@ -220,10 +260,26 @@ class AdminFacility {
     location: row['location'] as String? ?? '',
     phone: row['phone'] as String? ?? '',
     email: row['email'] as String? ?? '',
+    latitude: (row['latitude'] as num?)?.toDouble(),
+    longitude: (row['longitude'] as num?)?.toDouble(),
     address: row['address'] as String? ?? '',
     openingHours: row['opening_hours'] as String? ?? '',
     open24hrs: row['open_24hrs'] as bool? ?? false,
     open: row['open'] as bool? ?? false,
+  );
+
+  factory AdminFacility.hospital(Map<String, dynamic> row) => AdminFacility(
+    id: (row['id'] as num).toInt(),
+    kind: FacilityKind.hospital,
+    name: row['name'] as String? ?? 'Unknown Hospital',
+    location: row['location'] as String? ?? '',
+    phone: row['phone'] as String? ?? '',
+    email: '',
+    latitude: (row['latitude'] as num?)?.toDouble(),
+    longitude: (row['longitude'] as num?)?.toDouble(),
+    address: row['address'] as String? ?? '',
+    open24hrs: row['open_24hrs'] as bool? ?? true,
+    verified: row['verified'] as bool? ?? false,
   );
 }
 
@@ -295,7 +351,11 @@ class AdminPayout {
 /// Firestore paginated with a DocumentSnapshot cursor; Postgres uses a row
 /// offset via .range(), so the cursor is just an int.
 class AdminPage<T> {
-  const AdminPage({required this.items, required this.cursor, required this.hasMore});
+  const AdminPage({
+    required this.items,
+    required this.cursor,
+    required this.hasMore,
+  });
 
   final List<T> items;
   final int? cursor;

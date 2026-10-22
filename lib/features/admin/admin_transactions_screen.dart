@@ -99,7 +99,9 @@ class _AdminTransactionsScreenState
                     labelStyle: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: _filter == f ? AppColors.paper : AppColors.inkMuted,
+                      color: _filter == f
+                          ? AppColors.paper
+                          : AppColors.inkMuted,
                     ),
                   ),
                 ),
@@ -198,7 +200,10 @@ class _AdminTransactionsScreenState
                   style: TextButton.styleFrom(
                     foregroundColor: AppColors.danger,
                     visualDensity: VisualDensity.compact,
-                    textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   child: const Text('Reject'),
                 ),
@@ -216,7 +221,10 @@ class _AdminTransactionsScreenState
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   child: const Text('Mark paid'),
                 ),
@@ -289,12 +297,12 @@ class _AdminTransactionsScreenState
       await action();
       await _load(reset: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(success)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(success)));
     } on Exception catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMessage(e))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(errorMessage(e))));
     }
   }
 }

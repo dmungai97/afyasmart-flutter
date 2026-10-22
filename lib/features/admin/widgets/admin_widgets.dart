@@ -12,8 +12,18 @@ String formatWhen(DateTime? value) {
   if (value == null) return 'Recent';
   final date = value.toLocal();
   const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
   final day = date.day.toString().padLeft(2, '0');
   final month = months[(date.month - 1).clamp(0, 11)];
@@ -56,6 +66,8 @@ class StatCard extends StatelessWidget {
   final IconData? icon;
 
   @override
+  // Sentence-case 12px labels and 12px notes. These were 10px capitals in
+  // inkFaint, below a comfortable reading size for figures someone acts on.
   Widget build(BuildContext context) => AdminCard(
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
     child: Column(
@@ -66,19 +78,18 @@ class StatCard extends StatelessWidget {
         Row(
           children: [
             if (icon != null) ...[
-              Icon(icon, size: 14, color: AppColors.ruleStrong),
-              const SizedBox(width: 5),
+              Icon(icon, size: 16, color: AppColors.ruleStrong),
+              const SizedBox(width: 6),
             ],
             Expanded(
               child: Text(
-                label.toUpperCase(),
+                label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.inkFaint,
-                  letterSpacing: 0.5,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.inkMuted,
                 ),
               ),
             ),
@@ -90,7 +101,7 @@ class StatCard extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
-            fontSize: 18,
+            fontSize: 20,
             fontWeight: FontWeight.w700,
             color: AppColors.ink,
             fontFeatures: [FontFeature.tabularFigures()],
@@ -100,9 +111,13 @@ class StatCard extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             sub!,
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 10, color: AppColors.inkMuted),
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.inkMuted,
+              height: 1.3,
+            ),
           ),
         ],
       ],
@@ -129,7 +144,8 @@ class StatusPill extends StatelessWidget {
       StatusTone.warning => (
         AppColors.tintWarningBg,
         AppColors.tintWarningBorder,
-        AppColors.accent,
+        // accentInk, not accent: gold text on this tint was about 2:1.
+        AppColors.accentInk,
       ),
       StatusTone.danger => (
         AppColors.tintDangerBg,
@@ -152,11 +168,7 @@ class StatusPill extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          color: fg,
-        ),
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg),
       ),
     );
   }
