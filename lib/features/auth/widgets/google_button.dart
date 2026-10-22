@@ -78,9 +78,7 @@ class _GoogleSignInButtonState extends ConsumerState<GoogleSignInButton> {
 
   Future<void> _signIn() async {
     if (GoogleSignInButton._serverClientId.isEmpty) {
-      widget.onError(
-        'Google sign-in is not configured for this build.',
-      );
+      widget.onError('Google sign-in is not configured for this build.');
       return;
     }
 
@@ -117,7 +115,11 @@ class _GoogleSignInButtonState extends ConsumerState<GoogleSignInButton> {
       height: 50,
       child: OutlinedButton.icon(
         onPressed: widget.enabled ? _signIn : null,
-        icon: const Icon(Icons.g_mobiledata, size: 28, color: Color(0xFFEA4335)),
+        icon: const Icon(
+          Icons.g_mobiledata,
+          size: 28,
+          color: Color(0xFFEA4335),
+        ),
         label: const Text(
           'Continue with Google',
           style: TextStyle(

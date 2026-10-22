@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'brand.dart';
 import 'theme.dart';
 
 import '../features/admin/admin_dashboard_screen.dart';
@@ -217,7 +218,9 @@ final routerProvider = Provider<GoRouter>((ref) {
         result = null;
       } else if (Routes.premium.contains(location)) {
         result = Routes.subscription;
-      } else if (auth.isNewUser && !auth.hasCompletedOnboarding && !user.onboardingCompleted) {
+      } else if (auth.isNewUser &&
+          !auth.hasCompletedOnboarding &&
+          !user.onboardingCompleted) {
         result = inOnboarding ? null : Routes.welcome;
       } else if (inOnboarding || inAuth) {
         final plan = goState.uri.queryParameters['plan'];
@@ -228,14 +231,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         }
       }
 
-      debugPrint('[Router] location: $location, signedIn: $signedIn, -> redirect: $result');
+      debugPrint(
+        '[Router] location: $location, signedIn: $signedIn, -> redirect: $result',
+      );
       return result;
     },
     routes: [
-      GoRoute(
-        path: Routes.splash,
-        builder: (_, _) => const _SplashOverlay(),
-      ),
+      GoRoute(path: Routes.splash, builder: (_, _) => const _SplashOverlay()),
       // ?plan= and ?ref= come from deep links and are carried between the
       // two auth screens, matching useLocalSearchParams() in the RN
       // originals: `ref` attributes the referral at sign-up, `plan` sends the
@@ -252,10 +254,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           plan: goState.uri.queryParameters['plan'],
         ),
       ),
-      GoRoute(
-        path: Routes.welcome,
-        builder: (_, _) => const WelcomeScreen(),
-      ),
+      GoRoute(path: Routes.welcome, builder: (_, _) => const WelcomeScreen()),
       GoRoute(
         path: Routes.healthCheck,
         builder: (_, _) => const HealthCheckScreen(),
@@ -280,8 +279,14 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, _, child) => TabShell(child: child),
         routes: [
           GoRoute(path: Routes.home, builder: (_, _) => const HomeScreen()),
-          GoRoute(path: Routes.profile, builder: (_, _) => const ProfileScreen()),
-          GoRoute(path: Routes.doctors, builder: (_, _) => const DoctorsScreen()),
+          GoRoute(
+            path: Routes.profile,
+            builder: (_, _) => const ProfileScreen(),
+          ),
+          GoRoute(
+            path: Routes.doctors,
+            builder: (_, _) => const DoctorsScreen(),
+          ),
           GoRoute(path: Routes.chat, builder: (_, _) => const ChatScreen()),
           GoRoute(path: Routes.map, builder: (_, _) => const MapScreen()),
         ],
@@ -290,10 +295,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: Routes.diagnosisResults,
         builder: (_, _) => const DiagnosisResultsScreen(),
       ),
-      GoRoute(
-        path: Routes.pharmacy,
-        builder: (_, _) => const PharmacyScreen(),
-      ),
+      GoRoute(path: Routes.pharmacy, builder: (_, _) => const PharmacyScreen()),
       GoRoute(path: Routes.drugs, builder: (_, _) => const DrugsScreen()),
       // Profile sub-pages sit outside the tab shell, like subscription, so
       // they open full-screen with their own back arrow.
@@ -428,23 +430,7 @@ class _SplashOverlay extends StatelessWidget {
               ),
             ),
             SizedBox(height: 24),
-            Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(text: 'Afya'),
-                  TextSpan(
-                    text: 'Smart',
-                    style: TextStyle(color: AppColors.accent),
-                  ),
-                ],
-              ),
-              style: TextStyle(
-                color: AppColors.ink,
-                fontSize: 32,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.2,
-              ),
-            ),
+            Wordmark(fontSize: 32),
           ],
         ),
       ),

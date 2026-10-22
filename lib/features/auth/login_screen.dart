@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/brand.dart';
 import '../../core/errors.dart';
 import '../../core/router.dart';
+import '../../core/theme.dart';
 import '../../state/auth_controller.dart';
+import '../onboarding/widgets/vitals_rule.dart';
 import 'widgets/auth_backdrop.dart';
 import 'widgets/google_button.dart';
 
@@ -63,46 +66,28 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Same "clinical stationery" look as the welcome screen that leads here:
+  /// paper, ink, thin rules, no card. It used to be a teal gradient with
+  /// glowing rings, a pulse dot and an accent-barred card, so moving from
+  /// welcome to sign-in felt like switching apps.
   @override
   Widget build(BuildContext context) {
-    final insets = MediaQuery.viewPaddingOf(context);
-
     return Scaffold(
-      body: AuthBackdrop(
-        child: SafeArea(
-          top: false,
+      backgroundColor: AppColors.paper,
+      body: SafeArea(
+        child: Center(
           child: SingleChildScrollView(
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: EdgeInsets.fromLTRB(
-              20,
-              (insets.top < 36 ? 36 : insets.top) + 32,
-              20,
-              24,
+            padding: const EdgeInsets.fromLTRB(
+              Insets.lg,
+              Insets.xl,
+              Insets.lg,
+              Insets.lg,
             ),
-            child: Column(
-              children: [
-                const AuthLogo(),
-                const SizedBox(height: 16),
-                const Text(
-                  'AfyaSmart',
-                  style: TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Your Personal Health Companion',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.white.withValues(alpha: 0.85),
-                  ),
-                ),
-                const SizedBox(height: 28),
-                _card(),
-              ],
+            child: ConstrainedBox(
+              // Phone-width column on tablets and the web.
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: AutofillGroup(child: _form()),
             ),
           ),
         ),
@@ -110,171 +95,138 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  Widget _card() {
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+  Widget _form() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Align(alignment: Alignment.centerLeft, child: Wordmark()),
+      const SizedBox(height: Insets.md),
+      const Align(alignment: Alignment.centerLeft, child: VitalsRule()),
+      const SizedBox(height: Insets.md),
+      const Text(
+        'Sign in',
+        style: TextStyle(
+          color: AppColors.ink,
+          fontSize: 28,
+          fontWeight: FontWeight.w600,
+        ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // The accent bar across the top of the card.
-          Container(height: 4, color: AuthPalette.teal),
-          Padding(
-            padding: const EdgeInsets.all(22),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Welcome back 👋',
-                  style: TextStyle(
-                    fontSize: 21,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF1A202C),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Sign in to access your health dashboard',
-                  style: TextStyle(fontSize: 13, color: Color(0xFF718096)),
-                ),
-                const SizedBox(height: 20),
-                AuthField(
-                  label: 'Email address',
-                  hint: 'your@email.com',
-                  icon: Icons.mail_outline,
-                  controller: _email,
-                  keyboardType: TextInputType.emailAddress,
-                  showCheckWhenFilled: true,
-                  textInputAction: TextInputAction.next,
-                ),
-                const SizedBox(height: 14),
-                AuthField(
-                  label: 'Password',
-                  hint: 'Enter your password',
-                  icon: Icons.lock_outline,
-                  controller: _password,
-                  obscure: true,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: _submit,
-                ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: _loading ? null : _forgotPassword,
-                    child: const Text(
-                      'Forgot password?',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: AuthPalette.teal,
-                        fontWeight: FontWeight.w600,
-                      ),
+      const SizedBox(height: Insets.sm),
+      const Text(
+        'Welcome back. Sign in to see your health checks and results.',
+        style: TextStyle(color: AppColors.inkMuted, fontSize: 16, height: 1.5),
+      ),
+      const SizedBox(height: Insets.lg),
+      AuthField(
+        label: 'Email address',
+        hint: 'you@example.com',
+        icon: Icons.mail_outline,
+        controller: _email,
+        keyboardType: TextInputType.emailAddress,
+        autofillHints: const [AutofillHints.email],
+        textInputAction: TextInputAction.next,
+      ),
+      const SizedBox(height: Insets.md),
+      AuthField(
+        label: 'Password',
+        hint: 'Your password',
+        icon: Icons.lock_outline,
+        controller: _password,
+        obscure: true,
+        autofillHints: const [AutofillHints.password],
+        textInputAction: TextInputAction.done,
+        onSubmitted: _submit,
+      ),
+      Align(
+        alignment: Alignment.centerRight,
+        child: TextButton(
+          onPressed: _loading ? null : _forgotPassword,
+          style: TextButton.styleFrom(
+            foregroundColor: AppColors.brand,
+            minimumSize: const Size(48, 48),
+            textStyle: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          child: const Text('Forgot password?'),
+        ),
+      ),
+      const SizedBox(height: Insets.xs),
+      // Shape, height and colours come from the app theme, as on welcome.
+      FilledButton(
+        onPressed: _loading ? null : _submit,
+        child: _loading
+            ? const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.paper,
                     ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                _signInButton(),
-                if (GoogleSignInButton.isSupported) ...[
-                  const SizedBox(height: 20),
-                  _divider(),
-                  const SizedBox(height: 16),
-                  GoogleSignInButton(
-                    enabled: !_loading,
-                    onStart: () => setState(() => _loading = true),
-                    onFinish: () {
-                      if (mounted) setState(() => _loading = false);
-                    },
-                    onError: _showError,
-                  ),
+                  SizedBox(width: 10),
+                  Text('Signing in…'),
                 ],
-                const SizedBox(height: 18),
-                Center(
-                  child: Wrap(
-                    alignment: WrapAlignment.center,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      const Text(
-                        "Don't have an account? ",
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Color(0xFF718096),
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () => context.push(
-                          widget.plan == null
-                              ? Routes.register
-                              : '${Routes.register}?plan=${widget.plan}',
-                        ),
-                        child: const Text(
-                          'Register',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            color: AuthPalette.teal,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+              )
+            : const Text('Sign in'),
       ),
-    );
-  }
-
-  Widget _signInButton() => SizedBox(
-    height: 52,
-    child: FilledButton(
-      onPressed: _loading ? null : _submit,
-      style: FilledButton.styleFrom(
-        backgroundColor: AuthPalette.teal,
-        disabledBackgroundColor: AuthPalette.teal.withValues(alpha: 0.6),
-        foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+      if (GoogleSignInButton.isSupported) ...[
+        const SizedBox(height: Insets.lg),
+        _divider(),
+        const SizedBox(height: Insets.md),
+        GoogleSignInButton(
+          enabled: !_loading,
+          onStart: () => setState(() => _loading = true),
+          onFinish: () {
+            if (mounted) setState(() => _loading = false);
+          },
+          onError: _showError,
+        ),
+      ],
+      const SizedBox(height: Insets.lg),
+      const Divider(),
+      const SizedBox(height: Insets.sm),
+      TextButton(
+        onPressed: () => context.push(
+          widget.plan == null
+              ? Routes.register
+              : '${Routes.register}?plan=${widget.plan}',
+        ),
+        style: TextButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        child: const Text.rich(
+          TextSpan(
+            text: "Don't have an account? ",
+            style: TextStyle(color: AppColors.inkMuted),
+            children: [
+              TextSpan(
+                text: 'Create one',
+                style: TextStyle(
+                  color: AppColors.brand,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          style: TextStyle(fontSize: 15),
         ),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          if (_loading) ...[
-            const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(width: 10),
-            const Text('Signing in...', style: _btnText),
-          ] else ...[
-            const Text('Sign In', style: _btnText),
-            const SizedBox(width: 8),
-            const Icon(Icons.arrow_forward, size: 18),
-          ],
-        ],
-      ),
-    ),
+    ],
   );
 
-  Widget _divider() => Row(
+  Widget _divider() => const Row(
     children: [
-      const Expanded(child: Divider(color: Color(0xFFE2E8F0))),
+      Expanded(child: Divider()),
       Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: EdgeInsets.symmetric(horizontal: 12),
         child: Text(
-          'or continue with',
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          'or',
+          style: TextStyle(fontSize: 14, color: AppColors.inkMuted),
         ),
       ),
-      const Expanded(child: Divider(color: Color(0xFFE2E8F0))),
+      Expanded(child: Divider()),
     ],
   );
 
@@ -287,7 +239,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     setState(() => _loading = true);
     try {
-      await ref.read(authControllerProvider.notifier).requestPasswordReset(email);
+      await ref
+          .read(authControllerProvider.notifier)
+          .requestPasswordReset(email);
       _showError('Password reset link sent to $email.');
     } on Exception catch (e) {
       _showError(errorMessage(e));
@@ -296,9 +250,3 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 }
-
-const _btnText = TextStyle(
-  fontSize: 16,
-  fontWeight: FontWeight.w700,
-  color: Colors.white,
-);

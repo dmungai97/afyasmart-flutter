@@ -15,6 +15,10 @@ abstract final class AppColors {
   static const inkMuted = Color(0xFF4B5C50);
   static const inkFaint = Color(0xFF6B7A70);
   static const accent = Color(0xFFC9A227);
+
+  /// [accent] darkened for text. The accent itself is 2.1:1 on paper, too
+  /// faint to read, so it is for marks and rules only.
+  static const accentInk = Color(0xFF7A5F0E);
   static const rule = Color(0xFFC7CFC2);
   static const ruleStrong = Color(0xFF6B8F82);
 

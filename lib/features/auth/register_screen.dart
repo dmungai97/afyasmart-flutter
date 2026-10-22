@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/brand.dart';
 import '../../core/errors.dart';
 import '../../core/router.dart';
+import '../../core/theme.dart';
+import '../../services/auth_service.dart';
 import '../../state/auth_controller.dart';
+import '../onboarding/widgets/vitals_rule.dart';
 import 'widgets/auth_backdrop.dart';
 import 'widgets/google_button.dart';
 
@@ -70,6 +74,13 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       _showMessage('Passwords do not match.');
       return;
     }
+    // Optional, but a number given here is the one M-Pesa checkout offers
+    // later, so a typo is caught now rather than at payment.
+    final phone = _phone.text.trim();
+    if (phone.isNotEmpty && !AuthService.isValidKenyanPhone(phone)) {
+      _showMessage('Enter a Kenyan mobile number, like 0712 345 678.');
+      return;
+    }
 
     setState(() => _loading = true);
     try {
@@ -105,46 +116,25 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Same look as sign-in: paper, ink, thin rules, no card or teal backdrop.
   @override
   Widget build(BuildContext context) {
-    final insets = MediaQuery.viewPaddingOf(context);
-
     return Scaffold(
-      body: AuthBackdrop(
-        child: SafeArea(
-          top: false,
+      backgroundColor: AppColors.paper,
+      body: SafeArea(
+        child: Center(
           child: SingleChildScrollView(
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: EdgeInsets.fromLTRB(
-              20,
-              (insets.top < 36 ? 36 : insets.top) + 24,
-              20,
-              24,
+            padding: const EdgeInsets.fromLTRB(
+              Insets.lg,
+              Insets.xl,
+              Insets.lg,
+              Insets.lg,
             ),
-            child: Column(
-              children: [
-                const AuthLogo(),
-                const SizedBox(height: 14),
-                const Text(
-                  'Create your account',
-                  style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Join AfyaSmart and take charge of your health',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.white.withValues(alpha: 0.85),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                _card(),
-              ],
+            child: ConstrainedBox(
+              // Phone-width column on tablets and the web.
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: AutofillGroup(child: _form()),
             ),
           ),
         ),
@@ -152,162 +142,174 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     );
   }
 
-  Widget _card() => Container(
-    clipBehavior: Clip.antiAlias,
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(height: 4, color: AuthPalette.teal),
-        Padding(
-          padding: const EdgeInsets.all(22),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (_referralCode != null) _referralBanner(),
-              AuthField(
-                label: 'Full name',
-                hint: 'Jane Wanjiru',
-                icon: Icons.person_outline,
-                controller: _name,
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 14),
-              AuthField(
-                label: 'Email address',
-                hint: 'your@email.com',
-                icon: Icons.mail_outline,
-                controller: _email,
-                keyboardType: TextInputType.emailAddress,
-                showCheckWhenFilled: true,
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 14),
-              AuthField(
-                label: 'Phone number',
-                hint: '0712 345 678',
-                icon: Icons.phone_outlined,
-                controller: _phone,
-                keyboardType: TextInputType.phone,
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 14),
-              AuthField(
-                label: 'Password',
-                hint: 'Choose a password',
-                icon: Icons.lock_outline,
-                controller: _password,
-                obscure: true,
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 14),
-              AuthField(
-                label: 'Confirm password',
-                hint: 'Re-enter your password',
-                icon: Icons.lock_outline,
-                controller: _confirm,
-                obscure: true,
-                textInputAction: TextInputAction.done,
-                onSubmitted: _submit,
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                height: 52,
-                child: FilledButton(
-                  onPressed: _loading ? null : _submit,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AuthPalette.teal,
-                    disabledBackgroundColor: AuthPalette.teal.withValues(
-                      alpha: 0.6,
-                    ),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+  Widget _form() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Align(alignment: Alignment.centerLeft, child: Wordmark()),
+      const SizedBox(height: Insets.md),
+      const Align(alignment: Alignment.centerLeft, child: VitalsRule()),
+      const SizedBox(height: Insets.md),
+      const Text(
+        'Create your account',
+        style: TextStyle(
+          color: AppColors.ink,
+          fontSize: 28,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const SizedBox(height: Insets.sm),
+      const Text(
+        'Keep your health checks and results in one place.',
+        style: TextStyle(color: AppColors.inkMuted, fontSize: 16, height: 1.5),
+      ),
+      const SizedBox(height: Insets.lg),
+      if (_referralCode != null) _referralBanner(),
+      AuthField(
+        label: 'Full name',
+        hint: 'Jane Wanjiru',
+        icon: Icons.person_outline,
+        controller: _name,
+        autofillHints: const [AutofillHints.name],
+        textInputAction: TextInputAction.next,
+      ),
+      const SizedBox(height: Insets.md),
+      AuthField(
+        label: 'Email address',
+        hint: 'you@example.com',
+        icon: Icons.mail_outline,
+        controller: _email,
+        keyboardType: TextInputType.emailAddress,
+        autofillHints: const [AutofillHints.email],
+        textInputAction: TextInputAction.next,
+      ),
+      const SizedBox(height: Insets.md),
+      AuthField(
+        // Not required by _submit, so the label says so.
+        label: 'Phone number (optional)',
+        hint: '0712 345 678',
+        helperText: 'For M-Pesa payments',
+        icon: Icons.phone_outlined,
+        controller: _phone,
+        keyboardType: TextInputType.phone,
+        autofillHints: const [AutofillHints.telephoneNumber],
+        textInputAction: TextInputAction.next,
+      ),
+      const SizedBox(height: Insets.md),
+      AuthField(
+        label: 'Password',
+        hint: 'Choose a password',
+        icon: Icons.lock_outline,
+        controller: _password,
+        obscure: true,
+        autofillHints: const [AutofillHints.newPassword],
+        textInputAction: TextInputAction.next,
+      ),
+      const SizedBox(height: Insets.md),
+      AuthField(
+        label: 'Confirm password',
+        hint: 'Type it again',
+        icon: Icons.lock_outline,
+        controller: _confirm,
+        obscure: true,
+        autofillHints: const [AutofillHints.newPassword],
+        textInputAction: TextInputAction.done,
+        onSubmitted: _submit,
+      ),
+      const SizedBox(height: Insets.lg),
+      // Shape, height and colours come from the app theme, as on sign-in.
+      FilledButton(
+        onPressed: _loading ? null : _submit,
+        child: _loading
+            ? const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.paper,
                     ),
                   ),
-                  child: _loading
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text(
-                          'Create Account',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
-                        ),
-                ),
-              ),
-              if (GoogleSignInButton.isSupported) ...[
-                const SizedBox(height: 18),
-                GoogleSignInButton(
-                  enabled: !_loading,
-                  onStart: () => setState(() => _loading = true),
-                  onFinish: () {
-                    if (mounted) setState(() => _loading = false);
-                  },
-                  onError: _showMessage,
-                ),
-              ],
-              const SizedBox(height: 18),
-              Center(
-                child: Wrap(
-                  alignment: WrapAlignment.center,
-                  children: [
-                    const Text(
-                      'Already have an account? ',
-                      style: TextStyle(fontSize: 14, color: Color(0xFF718096)),
-                    ),
-                    GestureDetector(
-                      onTap: () => context.go(
-                        widget.plan == null
-                            ? Routes.login
-                            : '${Routes.login}?plan=${widget.plan}',
-                      ),
-                      child: const Text(
-                        'Sign in',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: AuthPalette.teal,
-                        ),
-                      ),
-                    ),
-                  ],
+                  SizedBox(width: 10),
+                  Text('Creating account…'),
+                ],
+              )
+            : const Text('Create account'),
+      ),
+      if (GoogleSignInButton.isSupported) ...[
+        const SizedBox(height: Insets.lg),
+        _divider(),
+        const SizedBox(height: Insets.md),
+        GoogleSignInButton(
+          enabled: !_loading,
+          onStart: () => setState(() => _loading = true),
+          onFinish: () {
+            if (mounted) setState(() => _loading = false);
+          },
+          onError: _showMessage,
+        ),
+      ],
+      const SizedBox(height: Insets.lg),
+      const Divider(),
+      const SizedBox(height: Insets.sm),
+      TextButton(
+        onPressed: () => context.go(
+          widget.plan == null
+              ? Routes.login
+              : '${Routes.login}?plan=${widget.plan}',
+        ),
+        style: TextButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        child: const Text.rich(
+          TextSpan(
+            text: 'Already have an account? ',
+            style: TextStyle(color: AppColors.inkMuted),
+            children: [
+              TextSpan(
+                text: 'Sign in',
+                style: TextStyle(
+                  color: AppColors.brand,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
           ),
+          style: TextStyle(fontSize: 15),
         ),
-      ],
-    ),
+      ),
+    ],
+  );
+
+  Widget _divider() => const Row(
+    children: [
+      Expanded(child: Divider()),
+      Padding(
+        padding: EdgeInsets.symmetric(horizontal: 12),
+        child: Text(
+          'or',
+          style: TextStyle(fontSize: 14, color: AppColors.inkMuted),
+        ),
+      ),
+      Expanded(child: Divider()),
+    ],
   );
 
   Widget _referralBanner() => Container(
-    margin: const EdgeInsets.only(bottom: 16),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    margin: const EdgeInsets.only(bottom: Insets.md),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
     decoration: BoxDecoration(
-      color: const Color(0xFFE4EAE0),
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: const Color(0xFFB9C9BC)),
+      color: AppColors.tintSuccessBg,
+      borderRadius: BorderRadius.circular(Radii.md),
+      border: Border.all(color: AppColors.tintSuccessBorder),
     ),
     child: Row(
       children: [
-        const Icon(Icons.card_giftcard, size: 18, color: Color(0xFF3F7A5C)),
-        const SizedBox(width: 8),
+        const Icon(Icons.card_giftcard, size: 20, color: AppColors.success),
+        const SizedBox(width: 10),
         Expanded(
           child: Text(
             'Referred with code $_referralCode',
-            style: const TextStyle(fontSize: 13, color: Color(0xFF2D3748)),
+            style: const TextStyle(fontSize: 14, color: AppColors.ink),
           ),
         ),
       ],
